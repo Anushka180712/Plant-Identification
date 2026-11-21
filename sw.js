@@ -1,8 +1,8 @@
 // Offline shell + background weather checks (where the browser supports it).
-const LANGS = ["en", "hi", "bn", "mr"];
+const LANGS = ["en", "hi", "bn", "mr", "gu", "pa", "or", "ta"];
 importScripts(...LANGS.map((l) => `js/lang/${l}.js`), "js/weather-core.js");
 
-const VERSION = "paudha-v3";
+const VERSION = "paudha-v4";
 const SHELL = [
   "./", "index.html", "css/styles.css", "config.js", "manifest.webmanifest",
   "js/app.js", "js/quality.js", "js/identify.js", "js/storage.js", "js/guide.js", "js/i18n.js", "js/weather-core.js",

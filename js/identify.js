@@ -5,7 +5,7 @@
 // Nothing is shown as an answer unless it clears the thresholds below.
 // Lower-scoring candidates are returned separately as "possible matches".
 
-import { getSettings } from "./storage.js";
+import { getSettings, saveSettings } from "./storage.js";
 
 export const THRESHOLDS = {
   isPlant: 0.80,     // photo really shows a plant
@@ -37,13 +37,15 @@ function endpoint(kind) {
   const s = getSettings();
   if (kind === "plant") {
     if (cfg.proxyUrl) return { url: cfg.proxyUrl };
-    if (s.apiKey) return { url: PLANT_ID_URL, key: s.apiKey };
+    if (s.apiKey) return { url: PLANT_ID_URL, key: cleanKey(s.apiKey), field: "apiKey" };
   } else {
     if (cfg.cropProxyUrl) return { url: cfg.cropProxyUrl };
-    if (s.cropKey) return { url: CROP_URL, key: s.cropKey };
+    if (s.cropKey) return { url: CROP_URL, key: cleanKey(s.cropKey), field: "cropKey" };
   }
   return null;
 }
+
+const cleanKey = (k) => String(k || "").replace(/[\s"'`]/g, "");
 
 export function serviceMode() {
   const cfg = window.PAUDHA_CONFIG || {};
@@ -54,12 +56,19 @@ export function serviceMode() {
 }
 export const cropEnabled = () => Boolean(endpoint("crop"));
 
+const SERVICE_NAME = { [PLANT_ID_URL]: "Plant.id", [CROP_URL]: "crop.health" };
+
 async function post(ep, params, body) {
   const headers = { "Content-Type": "application/json" };
   if (ep.key) headers["Api-Key"] = ep.key;
   const res = await fetch(`${ep.url}?${new URLSearchParams(params)}`, { method: "POST", headers, body: JSON.stringify(body) });
-  if (res.status === 401) throw new ApiError("err.badKey");
-  if (res.status === 429) throw new ApiError("err.credits");
+  const service = SERVICE_NAME[ep.url] || "server";
+  if (res.status === 401 || res.status === 403) {
+    let reason = "";
+    try { reason = (await res.clone().text()).slice(0, 120); } catch { /* ignore */ }
+    throw new ApiError("err.badKeyFor", { service, reason, status: res.status, field: ep.field });
+  }
+  if (res.status === 429) throw new ApiError("err.creditsFor", { service });
   return res;
 }
 
@@ -78,25 +87,50 @@ async function callCrop(ep, images, location, language) {
   if (location) { body.latitude = location.lat; body.longitude = location.lon; }
   let res = await post(ep, { details: CROP_DETAILS, language }, body);
   if (res.status === 400) res = await post(ep, { details: CROP_DETAILS, language: "en" }, body);
+  if (res.status === 400) res = await post(ep, { details: "common_names,description,treatment", language: "en" }, body);
   if (!res.ok) throw new ApiError("err.service", { status: res.status });
   return res.json();
 }
 
+const isKeyError = (r) => r?.status === "rejected" && r.reason?.key === "err.badKeyFor";
+
 export async function identify(images, location) {
-  const plantEp = endpoint("plant");
-  const cropEp = endpoint("crop");
+  let plantEp = endpoint("plant");
+  let cropEp = endpoint("crop");
   if (!plantEp && !cropEp) throw new ServiceNotConfigured();
   const lang = API_LANGS.includes(getSettings().lang) ? getSettings().lang : "en";
 
-  const [plantRes, cropRes] = await Promise.allSettled([
-    plantEp ? callPlantId(plantEp, images, location, lang) : Promise.resolve(null),
-    cropEp ? callCrop(cropEp, images, location, lang) : Promise.resolve(null)
+  const run = (pe, ce) => Promise.allSettled([
+    pe ? callPlantId(pe, images, location, lang) : Promise.resolve(null),
+    ce ? callCrop(ce, images, location, lang) : Promise.resolve(null)
   ]);
+  let [plantRes, cropRes] = await run(plantEp, cropEp);
+
+  // A Kindwise key only works for its own product. If a key was pasted into
+  // the wrong box, try it on the other service and move it there if it works.
+  const keyMoves = [];
+  if (isKeyError(plantRes) && plantEp?.key && !cropEp) {
+    const ep = { url: CROP_URL, key: plantEp.key, field: "cropKey" };
+    const r = (await Promise.allSettled([callCrop(ep, images, location, lang)]))[0];
+    if (r.status === "fulfilled") { cropRes = r; plantRes = { status: "fulfilled", value: null }; keyMoves.push(["apiKey", "cropKey", plantEp.key]); }
+  } else if (isKeyError(cropRes) && cropEp?.key && !plantEp) {
+    const ep = { url: PLANT_ID_URL, key: cropEp.key, field: "apiKey" };
+    const r = (await Promise.allSettled([callPlantId(ep, images, location, lang)]))[0];
+    if (r.status === "fulfilled") { plantRes = r; cropRes = { status: "fulfilled", value: null }; keyMoves.push(["cropKey", "apiKey", cropEp.key]); }
+  }
+  if (keyMoves.length) {
+    const [from, to, key] = keyMoves[0];
+    saveSettings({ [from]: "", [to]: key });
+  }
+
   const plantData = plantRes.status === "fulfilled" ? plantRes.value : null;
   const cropData = cropRes.status === "fulfilled" ? cropRes.value : null;
   if (!plantData && !cropData) throw (plantRes.reason || cropRes.reason);
 
-  return merge(plantData ? interpret(plantData) : null, cropData ? interpretCrop(cropData) : null);
+  const out = merge(plantData ? interpret(plantData) : null, cropData ? interpretCrop(cropData) : null);
+  out.warnings = [plantRes, cropRes].filter((r) => r.status === "rejected" && r.reason instanceof ApiError).map((r) => ({ key: r.reason.key, vars: r.reason.vars }));
+  if (keyMoves.length) out.keyMoved = keyMoves[0][1];
+  return out;
 }
 
 /* ---------- shared helpers ---------- */

@@ -18,7 +18,7 @@ A mobile-friendly web app for identifying Indian plants and checking their healt
 - **Photo checks on the phone** before anything is sent: too small, too dark, too bright, low detail and blurry photos are rejected with tips. Non-plant photos are rejected.
 - **Saved plant places** (search by name or use GPS), with a 10-day forecast and **warnings 7, 5, 3, 2 and 1 day before** heavy rain (IMD thresholds), heatwave, cold/frost, thunderstorm/hail, strong wind and long hot dry spells, plus what to do for your plants.
 - **Alerts** as phone notifications when the app is opened, and in the background on Android Chrome when installed.
-- The whole app in English, Hindi, Bengali and Marathi (more Indian languages being added), chosen on first launch.
+- The whole app in English, Hindi, Bengali, Marathi, Gujarati, Punjabi, Odia and Tamil (Telugu, Kannada and Malayalam coming), chosen on first launch.
 - Scan history, plant list and notes per place, deficiency guide, share results, export data, works offline as an installable app, dark mode.
 
 ## Setup

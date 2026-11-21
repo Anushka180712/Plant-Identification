@@ -43,6 +43,9 @@
   "err.generic": "Something went wrong. Please try again.",
   "err.badKey": "The identification service rejected the API key. Check it in Settings.",
   "err.credits": "The identification service has run out of credits for now. Try again later.",
+  "err.badKeyFor": "{service} rejected the API key. Check that you pasted a {service} key (not a key for a different Kindwise product) into the {service} box in Settings, with nothing missing.",
+  "err.creditsFor": "{service} has run out of credits for now. Try again later or add credits in your Kindwise account.",
+  "err.keyMoved": "The key you saved was a {service} key, so it has been moved to the {service} box in Settings.",
   "err.service": "The identification service failed ({status}).",
 
   "r.notPlant.title": "This doesn't look like a plant",

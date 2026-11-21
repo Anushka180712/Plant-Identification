@@ -221,6 +221,8 @@ function renderResult(res, el, { fromHistory = false } = {}) {
     html += `<div class="card">${candidatesHtml(res.diseaseCandidates, "r.diseaseCandidates.title", (c) => c.name)}</div>`;
   }
   if (res.sources?.length) html += `<p class="hint">${esc(t("r.source", { s: res.sources.join(" + ") }))}</p>`;
+  if (!fromHistory && res.keyMoved) html += `<p class="hint">ℹ️ ${esc(t("err.keyMoved", { service: res.keyMoved === "cropKey" ? "crop.health" : "Plant.id" }))}</p>`;
+  if (!fromHistory) for (const w of res.warnings || []) html += `<p class="hint">⚠️ ${esc(t(w.key, w.vars))}</p>`;
 
   if (!fromHistory) {
     html += `<div class="row space"><button class="btn small" id="share-btn">↗ ${esc(t("r.share"))}</button><button class="btn small" id="new-scan">＋ ${esc(t("r.newScan"))}</button></div>`;
