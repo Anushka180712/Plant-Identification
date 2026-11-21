@@ -14,6 +14,10 @@ export const THRESHOLDS = {
   disease: 0.75      // disease / pest / deficiency
 };
 const CANDIDATE_MIN = 0.10;   // smallest score worth listing as a possible match
+// Two independent checks that each rank the same answer first, each with at
+// least this score, confirm it even when neither alone clears the bar above.
+const AGREE_MIN = 0.25;
+const GEMINI_MIN = 0.70;      // the AI second opinion must itself be this confident
 
 const PLANT_ID_URL = "https://plant.id/api/v3/identification";
 const CROP_URL = "https://crop.kindwise.com/api/v1/identification";
@@ -92,6 +96,165 @@ async function callCrop(ep, images, location, language) {
   return res.json();
 }
 
+/* ---------- Gemini second opinion (never used on its own) ---------- */
+
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
+const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash"];
+const GEMINI_PROMPT = `You are a plant pathologist in India. Look at these photos of one plant.
+Answer in JSON only. Use English scientific and common names.
+- plant_scientific: species binomial (e.g. "Triticum aestivum"), or genus only if unsure of species, or "" if you cannot tell.
+- plant_common: common English name, or "".
+- plant_confidence: 0 to 1, how sure you are of the plant.
+- problem_type: one of "disease", "pest", "deficiency", "abiotic", "healthy", "unknown".
+- problem_common: common English name of the main problem (e.g. "yellow rust"), or "".
+- problem_scientific: scientific name of the pathogen or pest (e.g. "Puccinia striiformis"), or "".
+- problem_confidence: 0 to 1, how sure you are of the problem.
+Be honest: if the photos do not show enough, give a low confidence instead of guessing.`;
+
+export const geminiEnabled = () => Boolean(cleanKey(getSettings().geminiKey) || window.PAUDHA_CONFIG?.geminiProxyUrl);
+
+async function callGemini(images) {
+  const cfg = window.PAUDHA_CONFIG || {};
+  const key = cleanKey(getSettings().geminiKey);
+  const parts = [{ text: GEMINI_PROMPT }, ...images.map((img) => ({
+    inline_data: { mime_type: "image/jpeg", data: img.replace(/^data:[^,]+,/, "") }
+  }))];
+  const body = JSON.stringify({ contents: [{ role: "user", parts }], generationConfig: { temperature: 0, responseMimeType: "application/json" } });
+  let res;
+  for (const model of GEMINI_MODELS) {
+    const url = cfg.geminiProxyUrl || `${GEMINI_URL}${model}:generateContent`;
+    const headers = { "Content-Type": "application/json" };
+    if (!cfg.geminiProxyUrl) headers["x-goog-api-key"] = key;
+    res = await fetch(url, { method: "POST", headers, body });
+    if (res.status !== 404 || cfg.geminiProxyUrl) break;
+  }
+  if (res.status === 400 || res.status === 401 || res.status === 403) {
+    const txt = await res.text().catch(() => "");
+    if (res.status !== 400 || /api.?key/i.test(txt)) throw new ApiError("err.geminiKey", { status: res.status });
+  }
+  if (res.status === 429) throw new ApiError("err.creditsFor", { service: "Gemini" });
+  if (!res.ok) throw new ApiError("err.service", { status: res.status });
+  const data = await res.json();
+  const text = (data.candidates?.[0]?.content?.parts || []).map((x) => x.text || "").join("");
+  return parseOpinion(text);
+}
+
+export function parseOpinion(text) {
+  const m = String(text).match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try {
+    const o = JSON.parse(m[0]);
+    const num = (v) => Math.max(0, Math.min(1, Number(v) || 0));
+    return {
+      plantScientific: String(o.plant_scientific || ""),
+      plantCommon: String(o.plant_common || ""),
+      plantConfidence: num(o.plant_confidence),
+      problemType: String(o.problem_type || "unknown").toLowerCase(),
+      problemCommon: String(o.problem_common || ""),
+      problemScientific: String(o.problem_scientific || ""),
+      problemConfidence: num(o.problem_confidence)
+    };
+  } catch { return null; }
+}
+
+// Uses the AI opinion only to confirm what a Kindwise service already ranked first.
+export function corroborate(out, op) {
+  if (!op || out.verdict !== "plant") return out;
+  out.sources = [...out.sources, "Gemini"];
+
+  if (out.plant.status !== "sure" && op.plantScientific && op.plantConfidence >= GEMINI_MIN) {
+    const g = genusOf(op.plantScientific).toLowerCase();
+    const match = out.plantCandidates.find((c, i) => i === 0 && c.probability >= AGREE_MIN / 2 && genusOf(c.name).toLowerCase() === g)
+      || out.plantCandidates.find((c) => c.probability >= AGREE_MIN && genusOf(c.name).toLowerCase() === g);
+    if (match) out.plant = confirmedPlant(match, { name: op.plantScientific }, [match.source, "Gemini"]);
+  }
+
+  if (!out.diseases.length && op.problemConfidence >= GEMINI_MIN && /disease|pest|deficiency/.test(op.problemType)) {
+    const ai = { name: op.problemCommon, scientific: op.problemScientific };
+    const top = out.diseaseCandidates[0];
+    const match = top && top.probability >= AGREE_MIN / 2 && sameProblem(top, ai) ? top
+      : out.diseaseCandidates.find((c) => c.probability >= AGREE_MIN && sameProblem(c, ai));
+    if (match) {
+      out.diseases.push(confirmedDisease(match, [match.source, "Gemini"]));
+      out.diseaseCandidates = out.diseaseCandidates.filter((c) => c !== match);
+      out.health = { status: "problem" };
+    }
+  }
+  if (!out.diseases.length && op.problemType === "healthy" && op.problemConfidence >= 0.85
+      && out.healthyProbability != null && out.healthyProbability >= 0.6 && !out.diseaseCandidates.some((c) => c.probability >= 0.3)) {
+    out.health = { status: "healthy", probability: out.healthyProbability, confirmedBy: ["Kindwise", "Gemini"] };
+  }
+  return out;
+}
+
+/* ---------- matching answers from different checks ---------- */
+
+// Names that mean the same problem across services.
+const PROBLEM_GROUPS = [
+  ["yellow_rust", /stripe rust|yellow rust|puccinia striiformis/],
+  ["brown_rust", /leaf rust|brown rust|puccinia (triticina|recondita|hordei)/],
+  ["stem_rust", /stem rust|black rust|puccinia graminis/],
+  ["rust_other", /\brust\b|pucciniales|puccinia/],
+  ["powdery", /powdery mildew|erysiph|blumeria|podosphaera|leveillula/],
+  ["downy", /downy mildew|peronospor|plasmopara|sclerospora|pseudoperonospora/],
+  ["late_blight", /late blight|phytophthora infestans/],
+  ["early_blight", /early blight|alternaria solani/],
+  ["blast", /\bblast\b|magnaporthe|pyricularia/],
+  ["bacterial_blight", /bacterial (leaf )?blight|xanthomonas oryzae/],
+  ["sheath_blight", /sheath blight|rhizoctonia solani/],
+  ["brown_spot", /brown spot|bipolaris oryzae|helminthosporium oryzae|cochliobolus miyabeanus/],
+  ["spot_blotch", /spot blotch|bipolaris sorokiniana|cochliobolus sativus/],
+  ["loose_smut", /loose smut|ustilago/],
+  ["karnal_bunt", /karnal bunt|tilletia indica/],
+  ["leaf_curl", /leaf curl|begomovirus/],
+  ["yellow_mosaic", /yellow mosaic/],
+  ["mosaic", /mosaic/],
+  ["anthracnose", /anthracnose|colletotrichum/],
+  ["fusarium_wilt", /fusarium wilt|fusarium oxysporum/],
+  ["bacterial_wilt", /bacterial wilt|ralstonia/],
+  ["root_rot", /root rot/],
+  ["red_rot", /red rot/],
+  ["tikka", /tikka|cercospora arachidicola|late leaf spot|early leaf spot/],
+  ["cercospora", /cercospora/],
+  ["aphid", /aphid/],
+  ["whitefly", /whitefl|bemisia/],
+  ["mite", /\bmites?\b|tetranychus/],
+  ["thrips", /thrips/],
+  ["mealybug", /mealybug/],
+  ["leaf_miner", /leaf ?miner/],
+  ["bollworm", /bollworm|helicoverpa|pectinophora/],
+  ["fall_armyworm", /fall armyworm|spodoptera frugiperda/],
+  ["stem_borer", /stem borer|scirpophaga|chilo/],
+  ["deficiency", /deficien/]
+];
+
+const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+const groupOf = (x) => {
+  const text = norm(`${x.name} ${x.scientific || ""}`);
+  return (PROBLEM_GROUPS.find(([, re]) => re.test(text)) || [])[0] || null;
+};
+const binomial = (s) => norm(s).split(" ").slice(0, 2).join(" ");
+
+export function sameProblem(a, b) {
+  const ga = groupOf(a), gb = groupOf(b);
+  if (ga || gb) return ga === gb && ga !== "rust_other" && ga !== "mosaic";
+  const ba = binomial(a.scientific), bb = binomial(b.scientific);
+  if (ba.includes(" ") && ba === bb) return true;
+  return Boolean(norm(a.name)) && norm(a.name) === norm(b.name);
+}
+
+function confirmedDisease(c, by) {
+  const d = diseaseFrom(c.name, c.scientific || c.name, c.probability, c.d || {}, c.source);
+  d.confirmedBy = by;
+  return d;
+}
+
+function confirmedPlant(c, other, by) {
+  const base = { ...(other?.plant || {}), ...c.plant };
+  const sameSpecies = !other || binomial(other.name) === binomial(c.name);
+  return { ...base, status: "sure", probability: c.probability, confirmedBy: by, level: sameSpecies ? undefined : "genus", genus: sameSpecies ? undefined : genusOf(c.name) };
+}
+
 const isKeyError = (r) => r?.status === "rejected" && r.reason?.key === "err.badKeyFor";
 
 export async function identify(images, location) {
@@ -104,6 +267,7 @@ export async function identify(images, location) {
     pe ? callPlantId(pe, images, location, lang) : Promise.resolve(null),
     ce ? callCrop(ce, images, location, lang) : Promise.resolve(null)
   ]);
+  const geminiP = geminiEnabled() ? callGemini(images).then((v) => ({ status: "fulfilled", value: v }), (e) => ({ status: "rejected", reason: e })) : null;
   let [plantRes, cropRes] = await run(plantEp, cropEp);
 
   // A Kindwise key only works for its own product. If a key was pasted into
@@ -127,8 +291,11 @@ export async function identify(images, location) {
   const cropData = cropRes.status === "fulfilled" ? cropRes.value : null;
   if (!plantData && !cropData) throw (plantRes.reason || cropRes.reason);
 
-  const out = merge(plantData ? interpret(plantData) : null, cropData ? interpretCrop(cropData) : null);
-  out.warnings = [plantRes, cropRes].filter((r) => r.status === "rejected" && r.reason instanceof ApiError).map((r) => ({ key: r.reason.key, vars: r.reason.vars }));
+  const geminiRes = geminiP ? await geminiP : null;
+  const out = corroborate(merge(plantData ? interpret(plantData) : null, cropData ? interpretCrop(cropData) : null),
+    geminiRes?.status === "fulfilled" ? geminiRes.value : null);
+  if (geminiRes?.status === "fulfilled" && geminiRes.value) out.secondOpinion = geminiRes.value;
+  out.warnings = [plantRes, cropRes, geminiRes].filter(Boolean).filter((r) => r.status === "rejected" && r.reason instanceof ApiError).map((r) => ({ key: r.reason.key, vars: r.reason.vars }));
   if (keyMoves.length) out.keyMoved = keyMoves[0][1];
   return out;
 }
@@ -231,7 +398,7 @@ export function interpret(data) {
   out.plantCandidates = suggestions
     .filter((s) => s.probability >= CANDIDATE_MIN)
     .slice(0, 3)
-    .map((s) => ({ name: s.name, common: s.details?.common_names?.[0] || "", probability: s.probability }));
+    .map((s) => ({ name: s.name, common: s.details?.common_names?.[0] || "", probability: s.probability, plant: plantFrom(s), source: "Plant.id" }));
 
   // --- Health ---
   const healthy = r.is_healthy || {};
@@ -241,7 +408,7 @@ export function interpret(data) {
     if (s.probability >= THRESHOLDS.disease) {
       out.diseases.push(diseaseFrom(d.local_name || s.name, s.name, s.probability, d, "plant.id"));
     } else if (s.probability >= CANDIDATE_MIN) {
-      out.diseaseCandidates.push({ name: d.local_name || s.name, probability: s.probability });
+      out.diseaseCandidates.push({ name: d.local_name || s.name, scientific: s.name, probability: s.probability, d, source: "Plant.id" });
       if (s.probability >= 0.3) out.uncertainDiseaseCount++;
     }
   }
@@ -262,21 +429,20 @@ export function interpretCrop(data) {
 
   const crops = r.crop?.suggestions || [];
   const top = crops[0];
-  if (top && top.probability >= THRESHOLDS.species) {
-    out.plant = {
-      status: "sure",
-      name: top.scientific_name || top.name,
-      probability: top.probability,
-      commonNames: top.details?.common_names?.length ? top.details.common_names : [top.name],
-      description: textOf(top.details?.description),
-      url: top.details?.wiki_url || "",
-      isCrop: true
-    };
-  }
+  const cropPlant = (s) => ({
+    status: "sure",
+    name: s.scientific_name || s.name,
+    probability: s.probability,
+    commonNames: s.details?.common_names?.length ? s.details.common_names : [s.name],
+    description: textOf(s.details?.description),
+    url: s.details?.wiki_url || "",
+    isCrop: true
+  });
+  if (top && top.probability >= THRESHOLDS.species) out.plant = cropPlant(top);
   out.plantCandidates = crops
     .filter((s) => s.probability >= CANDIDATE_MIN)
     .slice(0, 3)
-    .map((s) => ({ name: s.scientific_name || s.name, common: s.name, probability: s.probability }));
+    .map((s) => ({ name: s.scientific_name || s.name, common: s.name, probability: s.probability, plant: cropPlant(s), source: "crop.health" }));
 
   for (const s of r.disease?.suggestions || []) {
     const d = s.details || {};
@@ -289,7 +455,7 @@ export function interpretCrop(data) {
     if (s.probability >= THRESHOLDS.disease) {
       out.diseases.push(diseaseFrom(name, s.scientific_name || s.name, s.probability, d, "crop.health"));
     } else if (s.probability >= CANDIDATE_MIN) {
-      out.diseaseCandidates.push({ name, probability: s.probability });
+      out.diseaseCandidates.push({ name, scientific: s.scientific_name || s.name, probability: s.probability, d, source: "crop.health" });
       if (s.probability >= 0.3) out.uncertainDiseaseCount++;
     }
   }
@@ -328,6 +494,19 @@ export function merge(p, c) {
   }
   out.plantCandidates = [...c.plantCandidates, ...p.plantCandidates]
     .sort((a, b) => b.probability - a.probability).slice(0, 3);
+  if (out.plant.status !== "sure") {
+    const pc = p.plantCandidates[0], cc = c.plantCandidates[0];
+    if (pc && cc && pc.probability >= AGREE_MIN && cc.probability >= AGREE_MIN && genusOf(pc.name).toLowerCase() === genusOf(cc.name).toLowerCase()) {
+      out.plant = confirmedPlant(cc, pc, ["Plant.id", "crop.health"]);
+    }
+  }
+
+  // Both services independently put the same problem on top: that counts as confirmed.
+  const pd = p.diseaseCandidates[0], cd = c.diseaseCandidates[0];
+  if (!c.diseases.length && !p.diseases.length && pd && cd && pd.probability >= AGREE_MIN && cd.probability >= AGREE_MIN && sameProblem(pd, cd)) {
+    c.diseases.push(confirmedDisease(cd, ["crop.health", "Plant.id"]));
+    c.diseaseCandidates.shift(); p.diseaseCandidates.shift();
+  }
 
   // Diseases: crop.health first (specialist), then Plant.id ones not already listed.
   const seen = new Set();

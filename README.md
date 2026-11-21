@@ -29,6 +29,7 @@ Identification uses two Kindwise services:
 
 - [Plant.id](https://www.kindwise.com/plant-id): plant identification + general plant health (garden, house plants, trees).
 - [crop.health](https://www.kindwise.com/crop-health) (recommended): crop identification and crop diseases (wheat, rice, cotton, pulses, vegetables). Field-crop diseases such as wheat yellow rust are detected far more reliably here.
+- [Gemini](https://aistudio.google.com/apikey) (optional, free key): an AI second opinion. It never names anything on its own; a plant or disease is named only when Gemini and Plant.id or crop.health independently give the same answer. Plant.id and crop.health agreeing with each other also counts as confirmed.
 
 When both keys are set, both are asked in parallel and the confident answers are combined. If close species split the score (e.g. bread wheat vs durum wheat), the genus is named when the genus as a whole clears the bar. Lower-scoring candidates are shown separately as "possible matches (not confirmed)".
 

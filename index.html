@@ -49,6 +49,8 @@
           </label>
         </div>
 
+        <button type="button" class="btn wide" id="burst-open">📸 <span data-i18n="scan.burst">Quick camera</span></button>
+        <p class="hint" data-i18n="scan.burstHint"></p>
         <ul id="photo-list" class="photo-list" aria-live="polite"></ul>
         <p class="hint" id="photo-count"></p>
 
@@ -117,6 +119,9 @@
         <label class="field-label" for="crop-key" data-i18n="settings.cropLabel"></label>
         <input id="crop-key" type="password" autocomplete="off" data-i18n-ph="settings.keyPh" placeholder="Paste your key">
         <p class="hint"><span data-i18n="settings.cropHint"></span> <a href="https://admin.kindwise.com/" target="_blank" rel="noopener">admin.kindwise.com</a></p>
+        <label class="field-label" for="gemini-key" data-i18n="settings.geminiLabel"></label>
+        <input id="gemini-key" type="password" autocomplete="off" data-i18n-ph="settings.keyPh" placeholder="Paste your key">
+        <p class="hint"><span data-i18n="settings.geminiHint"></span> <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></p>
         <button type="button" class="btn" id="save-key" data-i18n="settings.saveKey">Save key</button>
       </div>
 
@@ -156,5 +161,14 @@
   <script src="js/lang/en.js"></script>
   <script src="js/weather-core.js"></script>
   <script type="module" src="js/app.js"></script>
+  <div id="burst" class="burst" hidden>
+    <video id="burst-video" playsinline muted autoplay></video>
+    <div class="burst-top"><div class="chips" id="burst-parts"></div></div>
+    <div class="burst-bottom">
+      <div id="burst-thumbs" class="burst-thumbs"></div>
+      <button type="button" id="burst-shoot" class="shutter" aria-label="Take photo"></button>
+      <button type="button" id="burst-done" class="btn primary">Done</button>
+    </div>
+  </div>
 </body>
 </html>

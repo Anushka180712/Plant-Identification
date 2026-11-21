@@ -286,5 +286,17 @@
   "settings.saved": "Saved.",
   "settings.translationNote": "Translations may contain mistakes. Please tell us if something reads wrong.",
 
+  "r.agreed": "Confirmed: {s} agree",
+  "r.agreedNote": "Each check alone was below our confidence bar, but they reached the same answer independently, so we name it.",
+  "r.aiSays": "AI second opinion (not confirmed): {x}",
+  "r.cropTip": "Tip: for field crops like wheat, rice, cotton and pulses, add a free crop.health key in Settings. It is trained on crops and gives much surer answers.",
+  "err.geminiKey": "Gemini rejected the API key. Check the Gemini key in Settings.",
+  "settings.geminiLabel": "Gemini API key (free AI second opinion: a plant or disease is named when Gemini and Plant.id or crop.health agree. Photos are also sent to Google.)",
+  "settings.geminiHint": "Create a free key in Google AI Studio:",
+  "scan.burst": "Quick camera (several photos in a row)",
+  "scan.burstHint": "Snap leaf, stem and whole plant one after another. Tap the part at the top before each shot. You can also pick several photos from the gallery at once and change each photo's part below.",
+  "scan.done": "Done ({n})",
+  "scan.cameraFail": "Couldn't open the camera here. Using the normal camera instead.",
+
   "lang.pick": "Choose your language"
 };

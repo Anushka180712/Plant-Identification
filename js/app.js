@@ -1,11 +1,12 @@
-import { loadImage, analyseQuality, toJpeg } from "./quality.js";
+import { loadImage, analyseQuality, toJpeg, trimBorders } from "./quality.js";
 import { identify, serviceMode, THRESHOLDS, ServiceNotConfigured, ApiError } from "./identify.js";
 import * as store from "./storage.js";
 import { HELP, NUTRIENTS, PHOTO_TIP_KEYS, matchNutrient } from "./guide.js";
 import { t, setLang, getLang, hasChosenLang, LANGS, locale } from "./i18n.js";
 
 const W = window.PaudhaWeather;
-const MAX_PHOTOS = 5;
+const MAX_PHOTOS = 8;
+const PARTS = ["leaf", "stem", "root", "whole", "flower"];
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
@@ -49,7 +50,7 @@ $$("#part-chips .chip").forEach((c) =>
   })
 );
 
-async function addFiles(files) {
+async function addFiles(files, part = selectedPart) {
   for (const file of files) {
     if (photos.length >= MAX_PHOTOS) {
       toast(t("scan.maxPhotos", { max: MAX_PHOTOS }));
@@ -60,11 +61,12 @@ async function addFiles(files) {
       continue;
     }
     try {
-      const { img, url } = await loadImage(file);
+      const loaded = await loadImage(file);
+      const { img, url } = await trimBorders(loaded.img, loaded.url);
       const quality = analyseQuality(img);
       photos.push({
         id: store.uid(),
-        part: selectedPart,
+        part,
         url,
         quality,
         upload: quality.ok ? toJpeg(img, 1500, 0.85) : null,
@@ -77,8 +79,67 @@ async function addFiles(files) {
   renderPhotos();
 }
 
-$("#camera-input").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
-$("#gallery-input").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
+$("#camera-input").addEventListener("change", (e) => { addFiles([...e.target.files]); e.target.value = ""; });
+$("#gallery-input").addEventListener("change", (e) => { addFiles([...e.target.files]); e.target.value = ""; });
+
+/* Quick camera: snap several photos in a row without leaving the app. */
+let burstStream = null;
+let burstPart = "leaf";
+function renderBurstParts() {
+  $("#burst-parts").innerHTML = PARTS.map((x) => `<button type="button" class="chip${x === burstPart ? " selected" : ""}" data-bpart="${x}">${esc(partLabel(x))}</button>`).join("");
+  $$("[data-bpart]").forEach((b) => b.addEventListener("click", () => { burstPart = b.dataset.bpart; renderBurstParts(); }));
+}
+function renderBurstCount() {
+  $("#burst-done").textContent = t("scan.done", { n: photos.length });
+  $("#burst-thumbs").innerHTML = photos.slice(-4).map((p) => `<img src="${p.url}" alt="" class="${p.quality.ok ? "" : "bad"}">`).join("");
+}
+async function openBurst() {
+  if (!navigator.mediaDevices?.getUserMedia) { $("#camera-input").click(); return; }
+  try {
+    burstStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false
+    });
+  } catch {
+    toast(t("scan.cameraFail"));
+    $("#camera-input").click();
+    return;
+  }
+  const track = burstStream.getVideoTracks()[0];
+  try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch { /* not supported */ }
+  burstPart = selectedPart;
+  $("#burst-video").srcObject = burstStream;
+  $("#burst").hidden = false;
+  document.body.classList.add("no-scroll");
+  renderBurstParts();
+  renderBurstCount();
+}
+function closeBurst() {
+  if (burstStream) for (const tr of burstStream.getTracks()) tr.stop();
+  burstStream = null;
+  $("#burst-video").srcObject = null;
+  $("#burst").hidden = true;
+  document.body.classList.remove("no-scroll");
+}
+async function burstShoot() {
+  const v = $("#burst-video");
+  if (!v.videoWidth) return;
+  if (photos.length >= MAX_PHOTOS) { toast(t("scan.maxPhotos", { max: MAX_PHOTOS })); return; }
+  const c = document.createElement("canvas");
+  c.width = v.videoWidth;
+  c.height = v.videoHeight;
+  c.getContext("2d").drawImage(v, 0, 0);
+  $("#burst").classList.add("flash");
+  setTimeout(() => $("#burst").classList.remove("flash"), 150);
+  const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.92));
+  if (!blob) return;
+  await addFiles([new File([blob], `photo-${Date.now()}.jpg`, { type: "image/jpeg" })], burstPart);
+  const last = photos[photos.length - 1];
+  if (last && !last.quality.ok) toast(t(`q.${last.quality.problems[0].code}`));
+  renderBurstCount();
+}
+$("#burst-open").addEventListener("click", openBurst);
+$("#burst-shoot").addEventListener("click", burstShoot);
+$("#burst-done").addEventListener("click", closeBurst);
 
 function renderPhotos() {
   const list = $("#photo-list");
@@ -86,11 +147,15 @@ function renderPhotos() {
     <li class="photo-item ${p.quality.ok ? "" : "bad"}">
       <img src="${p.url}" alt="${esc(partLabel(p.part))}">
       <div class="meta">
-        <strong>${esc(partLabel(p.part))}</strong>
+        <select class="part-select" data-part-of="${p.id}" aria-label="${esc(t("scan.partQ"))}">${PARTS.map((x) => `<option value="${x}"${x === p.part ? " selected" : ""}>${esc(partLabel(x))}</option>`).join("")}</select>
         ${p.quality.ok ? `✅ ${esc(t("scan.clear"))}` : p.quality.problems.map((x) => `⚠️ ${esc(t(`q.${x.code}`))}`).join("<br>")}
       </div>
       <button class="icon-btn" data-remove="${p.id}" aria-label="${esc(t("scan.remove"))}">✕</button>
     </li>`).join("");
+  $$("[data-part-of]", list).forEach((sel) => sel.addEventListener("change", () => {
+    const p = photos.find((x) => x.id === sel.dataset.partOf);
+    if (p) p.part = sel.value;
+  }));
   $$("[data-remove]", list).forEach((b) => b.addEventListener("click", () => {
     const p = photos.find((x) => x.id === b.dataset.remove);
     if (p) URL.revokeObjectURL(p.url);
@@ -171,6 +236,10 @@ function photoTipsHtml() {
 }
 
 const sureBadge = (p) => `<span class="confidence">${esc(t("r.sure", { p: pct(p) }))}</span>`;
+const badgeFor = (x) => x.confirmedBy?.length
+  ? `<span class="confidence agreed">✔ ${esc(t("r.agreed", { s: x.confirmedBy.join(" + ") }))}</span>`
+  : sureBadge(x.probability);
+const agreedNote = (x) => x.confirmedBy?.length ? `<p class="hint">${esc(t("r.agreedNote"))}</p>` : "";
 
 function renderResult(res, el, { fromHistory = false } = {}) {
   if (res.verdict === "not_plant") {
@@ -190,7 +259,7 @@ function renderResult(res, el, { fromHistory = false } = {}) {
     const p = res.plant;
     const common = p.commonNames.slice(0, 3).join(", ");
     html += `<div class="card">
-      <h3>🌿 ${esc(common || p.name)} ${sureBadge(p.probability)}</h3>
+      <h3>🌿 ${esc(common || p.name)} ${badgeFor(p)}</h3>${agreedNote(p)}
       <p class="sci">${esc(p.level === "genus" ? p.genus : p.name)}${p.family ? ` · ${esc(t("r.family", { f: p.family }))}` : ""}</p>
       ${p.level === "genus" ? `<p class="hint">${esc(t("r.genus", { g: p.genus }))}</p>` : ""}
       ${p.description ? `<p>${esc(p.description.slice(0, 420))}${p.description.length > 420 ? "…" : ""}</p>` : ""}
@@ -204,7 +273,7 @@ function renderResult(res, el, { fromHistory = false } = {}) {
   }
 
   if (res.health.status === "healthy") {
-    html += `<div class="banner ok"><h3>✅ ${esc(t("r.healthy.title"))} ${sureBadge(res.health.probability)}</h3>
+    html += `<div class="banner ok"><h3>✅ ${esc(t("r.healthy.title"))} ${badgeFor(res.health)}</h3>
       <p>${esc(t("r.healthy.body"))}</p></div>`;
   } else if (res.health.status === "problem") {
     for (const d of res.diseases) html += diseaseCard(d);
@@ -219,6 +288,16 @@ function renderResult(res, el, { fromHistory = false } = {}) {
 
   if (res.diseases.length && res.diseaseCandidates?.length) {
     html += `<div class="card">${candidatesHtml(res.diseaseCandidates, "r.diseaseCandidates.title", (c) => c.name)}</div>`;
+  }
+  const op = res.secondOpinion;
+  if (op && (res.plant.status !== "sure" || (!res.diseases.length && res.health.status !== "healthy"))) {
+    const bits = [];
+    if (res.plant.status !== "sure" && op.plantScientific) bits.push(`${op.plantCommon || op.plantScientific} (${pct(op.plantConfidence)})`);
+    if (!res.diseases.length && op.problemCommon) bits.push(`${op.problemCommon}${op.problemScientific ? ` (${op.problemScientific})` : ""} (${pct(op.problemConfidence)})`);
+    if (bits.length) html += `<p class="hint">🤖 ${esc(t("r.aiSays", { x: bits.join("; ") }))}</p>`;
+  }
+  if (!fromHistory && !res.sources?.includes("crop.health") && (res.plant.status !== "sure" || res.plant.isCrop || /Triticum|Oryza|Gossypium|Zea|Sorghum|Pennisetum|Cicer|Cajanus|Vigna|Arachis|Brassica|Solanum|Capsicum|Saccharum/.test(res.plant.name || ""))) {
+    html += `<p class="hint">💡 ${esc(t("r.cropTip"))}</p>`;
   }
   if (res.sources?.length) html += `<p class="hint">${esc(t("r.source", { s: res.sources.join(" + ") }))}</p>`;
   if (!fromHistory && res.keyMoved) html += `<p class="hint">ℹ️ ${esc(t("err.keyMoved", { service: res.keyMoved === "cropKey" ? "crop.health" : "Plant.id" }))}</p>`;
@@ -264,7 +343,7 @@ function careFacts(p) {
 function diseaseCard(d) {
   const nutrient = d.deficiency ? matchNutrient(d.deficiency) : null;
   const kinds = (d.classification || []).join(", ");
-  let html = `<div class="banner danger"><h3>🩺 ${esc(d.name)} ${sureBadge(d.probability)}</h3>`;
+  let html = `<div class="banner danger"><h3>🩺 ${esc(d.name)} ${badgeFor(d)}</h3>${agreedNote(d)}`;
   if (kinds) html += `<p class="hint">${esc(t("r.type", { t: kinds }))}</p>`;
   if (d.description) html += `<p>${esc(d.description.slice(0, 500))}${d.description.length > 500 ? "…" : ""}</p>`;
   if (d.scientific) html += `<p class="sci">${esc(d.scientific)}</p>`;
@@ -293,10 +372,10 @@ function diseaseCard(d) {
 
 async function shareResult(res) {
   const lines = ["Paudha"];
-  if (res.plant.status === "sure") lines.push(`${t("r.plant")}: ${res.plant.commonNames[0] || res.plant.name} (${res.plant.name}), ${t("r.sure", { p: pct(res.plant.probability) })}`);
+  if (res.plant.status === "sure") lines.push(`${t("r.plant")}: ${res.plant.commonNames[0] || res.plant.name} (${res.plant.name}), ${res.plant.confirmedBy ? t("r.agreed", { s: res.plant.confirmedBy.join(" + ") }) : t("r.sure", { p: pct(res.plant.probability) })}`);
   else lines.push(`${t("r.plant")}: ${t("r.notSure")}`);
   if (res.health.status === "healthy") lines.push(`${t("r.health")}: ${t("r.healthy.title")}`);
-  else if (res.diseases.length) res.diseases.forEach((d) => lines.push(`${t("r.problem")}: ${d.name}, ${t("r.sure", { p: pct(d.probability) })}`));
+  else if (res.diseases.length) res.diseases.forEach((d) => lines.push(`${t("r.problem")}: ${d.name}, ${d.confirmedBy ? t("r.agreed", { s: d.confirmedBy.join(" + ") }) : t("r.sure", { p: pct(d.probability) })}`));
   else lines.push(`${t("r.health")}: ${t("r.notSure")}`);
   const text = lines.join("\n");
   try {
@@ -611,6 +690,7 @@ function renderSettings() {
   $("#service-status").textContent = mode === "proxy" ? `✅ ${t("settings.proxy")}` : mode === "key" ? `✅ ${t("settings.keyMode")}` : `⚠️ ${t("settings.none")}`;
   $("#api-key").value = s.apiKey ? "••••••••" : "";
   $("#crop-key").value = s.cropKey ? "••••••••" : "";
+  $("#gemini-key").value = s.geminiKey ? "••••••••" : "";
   $("#threshold-list").innerHTML = [
     t("settings.sure.plant", { p: pct(THRESHOLDS.isPlant) }),
     t("settings.sure.species", { p: pct(THRESHOLDS.species) }),
@@ -621,7 +701,7 @@ function renderSettings() {
 
 $("#save-key").addEventListener("click", () => {
   let changed = false;
-  for (const [id, field] of [["#api-key", "apiKey"], ["#crop-key", "cropKey"]]) {
+  for (const [id, field] of [["#api-key", "apiKey"], ["#crop-key", "cropKey"], ["#gemini-key", "geminiKey"]]) {
     const v = $(id).value.trim();
     if (v.startsWith("•")) continue;
     if (v !== (store.getSettings()[field] || "")) { store.saveSettings({ [field]: v }); changed = true; }
