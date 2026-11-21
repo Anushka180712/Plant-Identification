@@ -16,57 +16,51 @@
     <img src="icons/icon.svg" alt="" class="logo">
     <div>
       <h1>Paudha</h1>
-      <p class="tagline">Indian plant doctor</p>
+      <p class="tagline" data-i18n="app.tagline">Indian plant doctor</p>
     </div>
+    <label class="lang-top"><span class="sr" data-i18n="lang.pick">Choose your language</span>
+      <select id="top-lang" aria-label="Language"></select></label>
   </header>
 
   <main id="app">
     <!-- SCAN -->
     <section id="view-scan" class="view active" aria-labelledby="scan-h">
-      <h2 id="scan-h">Check a plant</h2>
-      <p class="muted">Add clear photos of the parts you are worried about. More parts (leaf + whole plant) gives a more reliable answer.</p>
+      <h2 id="scan-h" data-i18n="scan.title">Check a plant</h2>
+      <p class="muted" data-i18n="scan.intro"></p>
 
       <div class="card">
-        <label class="field-label">Which part is in the photo?</label>
+        <label class="field-label" data-i18n="scan.partQ">Which part is in the photo?</label>
         <div class="chips" id="part-chips" role="radiogroup">
-          <button type="button" class="chip selected" data-part="leaf">Leaf</button>
-          <button type="button" class="chip" data-part="stem">Stem</button>
-          <button type="button" class="chip" data-part="root">Root</button>
-          <button type="button" class="chip" data-part="whole">Whole plant</button>
-          <button type="button" class="chip" data-part="flower">Flower / fruit</button>
+          <button type="button" class="chip selected" data-part="leaf" data-i18n="part.leaf">Leaf</button>
+          <button type="button" class="chip" data-part="stem" data-i18n="part.stem">Stem</button>
+          <button type="button" class="chip" data-part="root" data-i18n="part.root">Root</button>
+          <button type="button" class="chip" data-part="whole" data-i18n="part.whole">Whole plant</button>
+          <button type="button" class="chip" data-part="flower" data-i18n="part.flower">Flower / fruit</button>
         </div>
 
         <div class="photo-actions">
           <label class="btn primary">
             <input type="file" accept="image/*" capture="environment" id="camera-input" hidden>
-            📷 Take photo
+            📷 <span data-i18n="scan.takePhoto">Take photo</span>
           </label>
           <label class="btn">
             <input type="file" accept="image/*" id="gallery-input" multiple hidden>
-            🖼️ From gallery
+            🖼️ <span data-i18n="scan.gallery">From gallery</span>
           </label>
         </div>
 
         <ul id="photo-list" class="photo-list" aria-live="polite"></ul>
-        <p class="hint" id="photo-count">Up to 5 photos. Each photo is checked for blur and light before it is sent.</p>
+        <p class="hint" id="photo-count"></p>
 
-        <label class="field-label" for="scan-place">Where is this plant? (optional)</label>
-        <select id="scan-place"><option value="">Not linked to a place</option></select>
+        <label class="field-label" for="scan-place" data-i18n="scan.placeQ">Where is this plant? (optional)</label>
+        <select id="scan-place"></select>
 
-        <button type="button" class="btn primary block" id="analyse-btn" disabled>Analyse plant</button>
+        <button type="button" class="btn primary block" id="analyse-btn" disabled data-i18n="scan.analyse">Analyse plant</button>
       </div>
 
       <details class="card tips">
-        <summary>📸 How to take a good photo</summary>
-        <ul>
-          <li>Use daylight. Avoid flash, deep shade and strong backlight.</li>
-          <li>Hold the phone steady and tap the screen to focus on the leaf or spot.</li>
-          <li>Fill most of the frame with the plant part. One leaf per photo works best.</li>
-          <li>For disease, show both the top and underside of an affected leaf, plus one healthy-looking leaf if possible.</li>
-          <li>For identification, add a photo of the whole plant and a close-up of a leaf (and flower or fruit if present).</li>
-          <li>For roots, wash off the soil gently before taking the photo.</li>
-          <li>Use a plain background (a sheet of paper or your palm) if leaves are against a busy background.</li>
-        </ul>
+        <summary>📸 <span data-i18n="scan.tipsTitle">How to take a good photo</span></summary>
+        <ul id="tips-list"></ul>
       </details>
 
       <div id="result" class="result" aria-live="polite"></div>
@@ -74,23 +68,23 @@
 
     <!-- PLACES & WEATHER -->
     <section id="view-places" class="view" aria-labelledby="places-h">
-      <h2 id="places-h">My plant places</h2>
-      <p class="muted">Save where your plants grow. You will get weather warnings 7, 5, 3, 2 and 1 day before heavy rain, heatwaves, cold, storms, hail or strong wind.</p>
+      <h2 id="places-h" data-i18n="places.title">My plant places</h2>
+      <p class="muted" data-i18n="places.intro"></p>
 
       <div id="alert-summary"></div>
 
       <div class="card">
-        <label class="field-label" for="place-search">Add a place</label>
+        <label class="field-label" for="place-search" data-i18n="places.add">Add a place</label>
         <div class="row">
-          <input id="place-search" type="search" placeholder="Village, town or city" autocomplete="off">
-          <button type="button" class="btn" id="place-search-btn">Search</button>
+          <input id="place-search" type="search" data-i18n-ph="places.searchPh" placeholder="Village, town or city" autocomplete="off">
+          <button type="button" class="btn" id="place-search-btn" data-i18n="places.search">Search</button>
         </div>
         <ul id="place-results" class="search-results"></ul>
-        <button type="button" class="btn block" id="use-location">📍 Use my current location</button>
+        <button type="button" class="btn block" id="use-location">📍 <span data-i18n="places.useLocation">Use my current location</span></button>
       </div>
 
       <div class="row space">
-        <button type="button" class="btn small" id="refresh-weather">↻ Refresh forecasts</button>
+        <button type="button" class="btn small" id="refresh-weather">↻ <span data-i18n="places.refresh">Refresh forecasts</span></button>
         <button type="button" class="btn small" id="enable-notify">🔔 Turn on alerts</button>
       </div>
 
@@ -99,73 +93,67 @@
 
     <!-- HISTORY -->
     <section id="view-history" class="view" aria-labelledby="history-h">
-      <h2 id="history-h">Scan history</h2>
-      <p class="muted">Saved only on this phone.</p>
+      <h2 id="history-h" data-i18n="history.title">Scan history</h2>
+      <p class="muted" data-i18n="history.local">Saved only on this phone.</p>
       <div id="history-list"></div>
     </section>
 
     <!-- GUIDE -->
     <section id="view-guide" class="view" aria-labelledby="guide-h">
-      <h2 id="guide-h">Guide &amp; help</h2>
+      <h2 id="guide-h" data-i18n="guide.title">Guide &amp; help</h2>
       <div id="guide-content"></div>
     </section>
 
     <!-- SETTINGS -->
     <section id="view-settings" class="view" aria-labelledby="settings-h">
-      <h2 id="settings-h">Settings</h2>
+      <h2 id="settings-h" data-i18n="settings.title">Settings</h2>
 
       <div class="card">
-        <h3>Identification service</h3>
+        <h3 data-i18n="settings.service">Identification service</h3>
         <p class="muted" id="service-status"></p>
-        <label class="field-label" for="api-key">Plant.id API key (only needed if the app shows "service not set up")</label>
-        <input id="api-key" type="password" autocomplete="off" placeholder="Paste your key">
-        <p class="hint">Get a key at <a href="https://admin.kindwise.com/signup" target="_blank" rel="noopener">admin.kindwise.com</a>. The key stays on this phone.</p>
-        <button type="button" class="btn" id="save-key">Save key</button>
+        <label class="field-label" for="api-key" data-i18n="settings.keyLabel"></label>
+        <input id="api-key" type="password" autocomplete="off" data-i18n-ph="settings.keyPh" placeholder="Paste your key">
+        <p class="hint"><span data-i18n="settings.keyHint"></span> <a href="https://admin.kindwise.com/signup" target="_blank" rel="noopener">admin.kindwise.com</a></p>
+        <label class="field-label" for="crop-key" data-i18n="settings.cropLabel"></label>
+        <input id="crop-key" type="password" autocomplete="off" data-i18n-ph="settings.keyPh" placeholder="Paste your key">
+        <p class="hint"><span data-i18n="settings.cropHint"></span> <a href="https://admin.kindwise.com/" target="_blank" rel="noopener">admin.kindwise.com</a></p>
+        <button type="button" class="btn" id="save-key" data-i18n="settings.saveKey">Save key</button>
       </div>
 
       <div class="card">
-        <h3>Plant name language</h3>
-        <select id="name-lang">
-          <option value="en">English</option>
-          <option value="hi">हिन्दी (Hindi)</option>
-          <option value="bn">বাংলা (Bengali)</option>
-          <option value="mr">मराठी (Marathi)</option>
-          <option value="ta">தமிழ் (Tamil)</option>
-          <option value="te">తెలుగు (Telugu)</option>
-          <option value="kn">ಕನ್ನಡ (Kannada)</option>
-          <option value="ml">മലയാളം (Malayalam)</option>
-          <option value="gu">ગુજરાતી (Gujarati)</option>
-          <option value="pa">ਪੰਜਾਬੀ (Punjabi)</option>
-        </select>
-        <p class="hint">Common names are shown in this language when available.</p>
+        <h3 data-i18n="settings.lang">Language</h3>
+        <select id="app-lang"></select>
+        <p class="hint" data-i18n="settings.langHint"></p>
+        <p class="hint" data-i18n="settings.translationNote"></p>
       </div>
 
       <div class="card">
-        <h3>How sure the app must be</h3>
-        <p>Paudha does not guess. It only names a plant, disease or deficiency when the analysis is at least:</p>
+        <h3 data-i18n="settings.sure">How sure the app must be</h3>
+        <p data-i18n="settings.sureIntro"></p>
         <ul id="threshold-list"></ul>
-        <p class="hint">Below these levels it says "not sure" and asks for better photos or an expert.</p>
+        <p class="hint" data-i18n="settings.sureHint"></p>
       </div>
 
       <div class="card">
-        <h3>Your data</h3>
-        <button type="button" class="btn" id="export-data">Export my data</button>
-        <button type="button" class="btn danger" id="clear-history">Clear scan history</button>
+        <h3 data-i18n="settings.data">Your data</h3>
+        <button type="button" class="btn" id="export-data" data-i18n="settings.export">Export my data</button>
+        <button type="button" class="btn danger" id="clear-history" data-i18n="settings.clear">Clear scan history</button>
       </div>
     </section>
   </main>
 
   <nav class="tabbar" aria-label="Main">
-    <button class="tab active" data-view="scan"><span>🔍</span>Scan</button>
-    <button class="tab" data-view="places"><span>🌦️</span>Places<b id="alert-badge" class="badge" hidden></b></button>
-    <button class="tab" data-view="history"><span>🗂️</span>History</button>
-    <button class="tab" data-view="guide"><span>📘</span>Guide</button>
-    <button class="tab" data-view="settings"><span>⚙️</span>Settings</button>
+    <button class="tab active" data-view="scan"><span class="ico">🔍</span><span data-i18n="tab.scan">Scan</span></button>
+    <button class="tab" data-view="places"><span class="ico">🌦️</span><span data-i18n="tab.places">Places</span><b id="alert-badge" class="badge" hidden></b></button>
+    <button class="tab" data-view="history"><span class="ico">🗂️</span><span data-i18n="tab.history">History</span></button>
+    <button class="tab" data-view="guide"><span class="ico">📘</span><span data-i18n="tab.guide">Guide</span></button>
+    <button class="tab" data-view="settings"><span class="ico">⚙️</span><span data-i18n="tab.settings">Settings</span></button>
   </nav>
 
   <div id="toast" class="toast" role="status" hidden></div>
 
   <script src="config.js"></script>
+  <script src="js/lang/en.js"></script>
   <script src="js/weather-core.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>

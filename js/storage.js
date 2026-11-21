@@ -31,7 +31,11 @@ function write(key, value) {
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 // Settings
-export const getSettings = () => read(KEYS.settings, { apiKey: "", nameLang: "en" });
+export function getSettings() {
+  const s = read(KEYS.settings, { apiKey: "" });
+  if (!s.lang && s.nameLang) s.lang = s.nameLang;
+  return s;
+}
 export const saveSettings = (patch) => write(KEYS.settings, { ...getSettings(), ...patch });
 
 // Places

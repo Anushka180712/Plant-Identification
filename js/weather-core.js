@@ -4,6 +4,16 @@
 (function (root) {
   "use strict";
 
+  // Translate with the loaded language files (js/lang/*.js), English fallback.
+  function makeT(lang) {
+    return function (key, vars) {
+      const all = root.PAUDHA_LANG || {};
+      let str = (all[lang] && all[lang][key]) || (all.en && all.en[key]) || key;
+      if (vars) str = str.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? vars[k] : m));
+      return str;
+    };
+  }
+
   // Days before an event on which an alert is raised.
   const MILESTONES = [7, 5, 3, 2, 1];
 
@@ -12,122 +22,111 @@
     {
       id: "rain_extreme", group: "rain", severe: true,
       test: (d) => d.rain >= 204.5,
-      title: "Extremely heavy rain",
-      detail: (d) => `${d.rain.toFixed(0)} mm of rain expected`,
+      detail: (d, t) => t("wd.rain", { mm: d.rain.toFixed(0) }),
       advice: [
-        "Open drains and field channels now so water can flow out.",
-        "Move potted plants and seedlings to a raised, sheltered spot.",
-        "Stake tall plants and harvest anything ripe before the rain.",
-        "Do not apply any fertiliser or spray before heavy rain; it will wash off."
+        "wa.drains_now",
+        "wa.move_pots_raised",
+        "wa.stake_harvest",
+        "wa.no_fert_rain"
       ]
     },
     {
       id: "rain_very_heavy", group: "rain", severe: true,
       test: (d) => d.rain >= 115.6 && d.rain < 204.5,
-      title: "Very heavy rain",
-      detail: (d) => `${d.rain.toFixed(0)} mm of rain expected`,
+      detail: (d, t) => t("wd.rain", { mm: d.rain.toFixed(0) }),
       advice: [
-        "Clear drains and make sure pots have drainage holes.",
-        "Stake or tie up tall and fruiting plants.",
-        "Harvest ripe fruit and vegetables early.",
-        "Hold off on fertiliser or sprays until the rain passes."
+        "wa.clear_drains",
+        "wa.stake_tie",
+        "wa.harvest_early",
+        "wa.no_fert_rain"
       ]
     },
     {
       id: "rain_heavy", group: "rain", severe: false,
       test: (d) => d.rain >= 64.5 && d.rain < 115.6,
-      title: "Heavy rain",
-      detail: (d) => `${d.rain.toFixed(0)} mm of rain expected`,
+      detail: (d, t) => t("wd.rain", { mm: d.rain.toFixed(0) }),
       advice: [
-        "Check that water will not stand around roots.",
-        "Skip watering on the days before.",
-        "Watch for fungal spots on leaves a few days after the rain."
+        "wa.standing_water",
+        "wa.skip_water",
+        "wa.fungal_watch"
       ]
     },
     {
       id: "heat_severe", group: "heat", severe: true,
       test: (d) => d.tmax >= 45,
-      title: "Severe heatwave",
-      detail: (d) => `Up to ${d.tmax.toFixed(0)}°C`,
+      detail: (d, t) => t("wd.tmax", { t: d.tmax.toFixed(0) }),
       advice: [
-        "Water deeply early in the morning or late evening, not at midday.",
-        "Put up shade net or cloth over young plants and nurseries.",
-        "Mulch the soil with dry leaves or straw to keep roots cool.",
-        "Move pots off hot concrete and away from west-facing walls."
+        "wa.water_cool",
+        "wa.shade_net",
+        "wa.mulch_cool",
+        "wa.pots_off_concrete"
       ]
     },
     {
       id: "heat", group: "heat", severe: false,
       test: (d) => d.tmax >= 40 && d.tmax < 45,
-      title: "Heatwave conditions",
-      detail: (d) => `Up to ${d.tmax.toFixed(0)}°C`,
+      detail: (d, t) => t("wd.tmax", { t: d.tmax.toFixed(0) }),
       advice: [
-        "Water early morning; check soil moisture again in the evening.",
-        "Mulch around plants to hold moisture.",
-        "Give seedlings and potted plants afternoon shade."
+        "wa.water_morning",
+        "wa.mulch",
+        "wa.afternoon_shade"
       ]
     },
     {
       id: "frost", group: "cold", severe: true,
       test: (d) => d.tmin <= 2,
-      title: "Frost risk",
-      detail: (d) => `Down to ${d.tmin.toFixed(0)}°C`,
+      detail: (d, t) => t("wd.tmin", { t: d.tmin.toFixed(0) }),
       advice: [
-        "Cover sensitive plants overnight with cloth or straw (not plastic touching leaves).",
-        "Water the soil lightly in the evening; moist soil holds heat better.",
-        "Bring potted plants indoors or next to a wall."
+        "wa.cover_night",
+        "wa.evening_soil_water",
+        "wa.pots_indoors"
       ]
     },
     {
       id: "cold", group: "cold", severe: false,
       test: (d) => d.tmin > 2 && d.tmin <= 6,
-      title: "Cold night",
-      detail: (d) => `Down to ${d.tmin.toFixed(0)}°C`,
+      detail: (d, t) => t("wd.tmin", { t: d.tmin.toFixed(0) }),
       advice: [
-        "Protect tropical plants (e.g. papaya, banana seedlings, tulsi) at night.",
-        "Avoid evening watering of leaves."
+        "wa.protect_tropical",
+        "wa.no_evening_leaf_water"
       ]
     },
     {
       id: "hail", group: "storm", severe: true,
       test: (d) => d.code === 96 || d.code === 99,
-      title: "Thunderstorm with hail",
-      detail: () => "Hail is possible",
+      detail: (d, t) => t("wd.hail"),
       advice: [
-        "Cover nurseries and vegetable beds with net or old sacks.",
-        "Move pots under a roof.",
-        "Harvest ready fruit and vegetables beforehand."
+        "wa.cover_beds",
+        "wa.pots_under_roof",
+        "wa.harvest_ready"
       ]
     },
     {
       id: "thunder", group: "storm", severe: false,
       test: (d) => d.code === 95,
-      title: "Thunderstorm",
-      detail: () => "Thunderstorms expected",
+      detail: (d, t) => t("wd.thunder"),
       advice: [
-        "Stake tall plants and climbers.",
-        "Stay indoors during lightning; don't work in open fields."
+        "wa.stake_climbers",
+        "wa.lightning"
       ]
     },
     {
       id: "wind_severe", group: "wind", severe: true,
       test: (d) => d.gust >= 90,
-      title: "Damaging winds",
-      detail: (d) => `Gusts up to ${d.gust.toFixed(0)} km/h`,
+      detail: (d, t) => t("wd.gust", { v: d.gust.toFixed(0) }),
       advice: [
-        "Tie banana, papaya and young trees to strong stakes.",
-        "Move hanging baskets and pots to the ground in a sheltered spot.",
-        "Secure shade nets and poly-house covers."
+        "wa.tie_trees",
+        "wa.baskets_down",
+        "wa.secure_nets"
       ]
     },
     {
       id: "wind", group: "wind", severe: false,
       test: (d) => d.gust >= 60 && d.gust < 90,
-      title: "Strong winds",
-      detail: (d) => `Gusts up to ${d.gust.toFixed(0)} km/h`,
+      detail: (d, t) => t("wd.gust", { v: d.gust.toFixed(0) }),
       advice: [
-        "Stake tall plants and climbers.",
-        "Move light pots to a sheltered spot."
+        "wa.stake_climbers",
+        "wa.light_pots"
       ]
     }
   ];
@@ -207,7 +206,8 @@
   }
 
   // All hazards in the forecast with days-ahead info.
-  function analyse(forecast) {
+  function analyse(forecast, t) {
+    t = t || makeT("en");
     const today = todayIn(forecast.timezone);
     const events = [];
     for (const day of forecast.days) {
@@ -217,7 +217,7 @@
         events.push({
           key: `${rule.id}|${day.date}`,
           rule: rule.id, group: rule.group, severe: rule.severe,
-          title: rule.title, detail: rule.detail(day), advice: rule.advice,
+          title: t("w." + rule.id), detail: rule.detail(day, t), advice: rule.advice.map((a) => t(a)),
           date: day.date, daysAhead: ahead,
           milestone: MILESTONES.includes(ahead) ? ahead : null,
           lowConfidence: ahead > 7
@@ -229,13 +229,9 @@
       const ahead = daysBetween(today, dry.start);
       events.push({
         key: `dry|${dry.start}`, rule: "dry", group: "dry", severe: false,
-        title: "Long hot dry spell",
-        detail: `${dry.length}+ hot days in a row with no rain`,
-        advice: [
-          "Plan watering: deep watering every few days is better than a little daily.",
-          "Mulch beds and pots to cut evaporation.",
-          "Collect and store water where you can."
-        ],
+        title: t("w.dry"),
+        detail: t("wd.dry", { n: dry.length }),
+        advice: ["wa.plan_water", "wa.mulch_beds", "wa.store_water"].map((a) => t(a)),
         date: dry.start, daysAhead: ahead,
         milestone: MILESTONES.includes(ahead) ? ahead : null,
         lowConfidence: ahead > 7
@@ -245,26 +241,28 @@
     return events;
   }
 
-  function whenText(daysAhead) {
-    if (daysAhead === 0) return "Today";
-    if (daysAhead === 1) return "Tomorrow";
-    return `In ${daysAhead} days`;
+  function whenText(daysAhead, t) {
+    t = t || makeT("en");
+    if (daysAhead === 0) return t("when.0");
+    if (daysAhead === 1) return t("when.1");
+    return t("when.n", { n: daysAhead });
   }
 
   // Alerts that should go out as notifications right now.
-  function dueNotifications(places, forecasts, notified) {
+  function dueNotifications(places, forecasts, notified, t) {
+    t = t || makeT("en");
     const out = [];
     for (const place of places) {
       const f = forecasts[place.id];
       if (!f) continue;
-      for (const e of analyse(f)) {
+      for (const e of analyse(f, t)) {
         if (e.milestone == null && e.daysAhead !== 0) continue;
         const key = `${place.id}|${e.key}|${e.daysAhead}`;
         if (notified[key]) continue;
         out.push({
           key,
-          title: `${e.title}: ${whenText(e.daysAhead).toLowerCase()} at ${place.name}`,
-          body: `${e.detail} on ${e.date}. ${e.advice[0]}`,
+          title: t("notify.title", { title: e.title, when: whenText(e.daysAhead, t), place: place.name }),
+          body: t("notify.body", { detail: e.detail, date: e.date, advice: e.advice[0] }),
           severe: e.severe
         });
       }
@@ -272,5 +270,5 @@
     return out;
   }
 
-  root.PaudhaWeather = { MILESTONES, RULES, WX, fetchForecast, analyse, todayIn, daysBetween, whenText, dueNotifications };
+  root.PaudhaWeather = { makeT, MILESTONES, RULES, WX, fetchForecast, analyse, todayIn, daysBetween, whenText, dueNotifications };
 })(typeof self !== "undefined" ? self : window);

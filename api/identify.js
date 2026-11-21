@@ -1,11 +1,12 @@
-// Optional server function (Vercel) that keeps the Plant.id API key secret.
-// Set PLANT_ID_API_KEY in the Vercel project, and optionally ALLOWED_ORIGIN
-// (e.g. https://anushka180712.github.io). Then put this function's URL in config.js.
+// Optional server functions (Vercel) that keep the Kindwise API keys secret.
+// Set PLANT_ID_API_KEY (and CROP_HEALTH_API_KEY for /api/crop) in the Vercel
+// project, and optionally ALLOWED_ORIGIN (e.g. https://anushka180712.github.io).
+// Then put the function URLs in config.js.
 
-const API_URL = "https://plant.id/api/v3/identification";
 const MAX_BODY = 12 * 1024 * 1024;
 
-export default async function handler(req, res) {
+export function makeHandler(API_URL, keyName) {
+ return async function handler(req, res) {
   const allowed = process.env.ALLOWED_ORIGIN || "*";
   const origin = req.headers.origin || "";
   res.setHeader("Access-Control-Allow-Origin", allowed === "*" ? "*" : (allowed.split(",").map((s) => s.trim()).includes(origin) ? origin : "null"));
@@ -15,7 +16,7 @@ export default async function handler(req, res) {
 
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
-  if (!process.env.PLANT_ID_API_KEY) return res.status(500).json({ error: "Server is missing PLANT_ID_API_KEY" });
+  if (!process.env[keyName]) return res.status(500).json({ error: `Server is missing ${keyName}` });
 
   const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
   if (body.length > MAX_BODY) return res.status(413).json({ error: "Photos too large" });
@@ -32,11 +33,14 @@ export default async function handler(req, res) {
 
   const upstream = await fetch(`${API_URL}?${params}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Api-Key": process.env.PLANT_ID_API_KEY },
+    headers: { "Content-Type": "application/json", "Api-Key": process.env[keyName] },
     body
   });
   const text = await upstream.text();
   res.status(upstream.status).setHeader("Content-Type", "application/json").send(text);
+ };
 }
+
+export default makeHandler("https://plant.id/api/v3/identification", "PLANT_ID_API_KEY");
 
 export const config = { api: { bodyParser: { sizeLimit: "12mb" } } };

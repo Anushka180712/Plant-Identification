@@ -1,10 +1,12 @@
 // Offline shell + background weather checks (where the browser supports it).
-importScripts("js/weather-core.js");
+const LANGS = ["en", "hi", "bn", "mr"];
+importScripts(...LANGS.map((l) => `js/lang/${l}.js`), "js/weather-core.js");
 
-const VERSION = "paudha-v1";
+const VERSION = "paudha-v3";
 const SHELL = [
   "./", "index.html", "css/styles.css", "config.js", "manifest.webmanifest",
-  "js/app.js", "js/quality.js", "js/identify.js", "js/storage.js", "js/guide.js", "js/weather-core.js",
+  "js/app.js", "js/quality.js", "js/identify.js", "js/storage.js", "js/guide.js", "js/i18n.js", "js/weather-core.js",
+  ...LANGS.map((l) => `js/lang/${l}.js`),
   "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png"
 ];
 
@@ -47,7 +49,8 @@ async function backgroundCheck() {
     try { forecasts[p.id] = await self.PaudhaWeather.fetchForecast(p.lat, p.lon); } catch { /* skip */ }
   }
   const notified = state.notified || {};
-  const due = self.PaudhaWeather.dueNotifications(state.places || [], forecasts, notified);
+  const t = self.PaudhaWeather.makeT(state.lang || "en");
+  const due = self.PaudhaWeather.dueNotifications(state.places || [], forecasts, notified, t);
   for (const n of due) {
     await self.registration.showNotification(n.title, {
       body: n.body, icon: "icons/icon-192.png", badge: "icons/icon-192.png", tag: n.key, data: { url: "./#places" }

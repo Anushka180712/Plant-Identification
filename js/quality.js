@@ -14,7 +14,7 @@ export function loadImage(file) {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => resolve({ img, url });
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not open this file as a photo.")); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("cantOpen")); };
     img.src = url;
   });
 }
@@ -35,7 +35,7 @@ export function analyseQuality(img) {
   const problems = [];
   const shortSide = Math.min(img.naturalWidth, img.naturalHeight);
   if (shortSide < MIN_SIDE) {
-    problems.push({ code: "small", text: "The photo is too small. Take it with the phone camera instead of a screenshot or forwarded image." });
+    problems.push({ code: "small" });
   }
 
   const { ctx, w, h } = drawScaled(img, 512);
@@ -69,15 +69,15 @@ export function analyseQuality(img) {
   const sharpness = count ? lapSq / count - lapMean * lapMean : 0;
 
   if (mean < MIN_BRIGHTNESS || dark / n > MAX_DARK) {
-    problems.push({ code: "dark", text: "The photo is too dark. Move into daylight or open shade, and don't cover the camera." });
+    problems.push({ code: "dark" });
   } else if (mean > MAX_BRIGHTNESS || clipped / n > MAX_CLIPPED) {
-    problems.push({ code: "bright", text: "The photo is too bright or washed out. Avoid direct sun glare and flash." });
+    problems.push({ code: "bright" });
   }
   if (std < MIN_CONTRAST) {
-    problems.push({ code: "flat", text: "The photo has almost no detail. Make sure the plant fills most of the frame." });
+    problems.push({ code: "flat" });
   }
   if (sharpness < MIN_SHARPNESS) {
-    problems.push({ code: "blur", text: "The photo is blurry. Hold the phone steady, tap the leaf on screen to focus, then take it again." });
+    problems.push({ code: "blur" });
   }
 
   return {

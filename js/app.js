@@ -1,7 +1,8 @@
 import { loadImage, analyseQuality, toJpeg } from "./quality.js";
-import { identify, serviceMode, THRESHOLDS, ServiceNotConfigured } from "./identify.js";
+import { identify, serviceMode, THRESHOLDS, ServiceNotConfigured, ApiError } from "./identify.js";
 import * as store from "./storage.js";
-import { HELP, NUTRIENTS, PHOTO_TIPS, matchNutrient } from "./guide.js";
+import { HELP, NUTRIENTS, PHOTO_TIP_KEYS, matchNutrient } from "./guide.js";
+import { t, setLang, getLang, hasChosenLang, LANGS, locale } from "./i18n.js";
 
 const W = window.PaudhaWeather;
 const MAX_PHOTOS = 5;
@@ -10,31 +11,36 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const pct = (p) => `${Math.round(p * 100)}%`;
-const PART_LABEL = { leaf: "Leaf", stem: "Stem", root: "Root", whole: "Whole plant", flower: "Flower / fruit" };
+const partLabel = (p) => t(`part.${p}`);
+const fmtDate = (iso, opts) => new Date(iso + (iso.length === 10 ? "T00:00:00" : "")).toLocaleDateString(locale(), opts);
+const fmtDateTime = (iso) => new Date(iso).toLocaleString(locale());
 
 function toast(msg, ms = 3000) {
-  const t = $("#toast");
-  t.textContent = msg;
-  t.hidden = false;
+  const el = $("#toast");
+  el.textContent = msg;
+  el.hidden = false;
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => (t.hidden = true), ms);
+  toast._t = setTimeout(() => (el.hidden = true), ms);
 }
 
 /* ---------------- Tabs ---------------- */
+let currentView = "scan";
 function showView(name) {
+  currentView = name;
   $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
-  $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
+  $$(".tab").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   if (name === "history") renderHistory();
   if (name === "places") renderPlaces();
   if (name === "settings") renderSettings();
   window.scrollTo({ top: 0 });
   history.replaceState(null, "", `#${name}`);
 }
-$$(".tab").forEach((t) => t.addEventListener("click", () => showView(t.dataset.view)));
+$$(".tab").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
 
 /* ---------------- Scan ---------------- */
 let selectedPart = "leaf";
 let photos = [];
+let lastResult = null;
 
 $$("#part-chips .chip").forEach((c) =>
   c.addEventListener("click", () => {
@@ -46,11 +52,11 @@ $$("#part-chips .chip").forEach((c) =>
 async function addFiles(files) {
   for (const file of files) {
     if (photos.length >= MAX_PHOTOS) {
-      toast(`You can add up to ${MAX_PHOTOS} photos.`);
+      toast(t("scan.maxPhotos", { max: MAX_PHOTOS }));
       break;
     }
     if (!file.type.startsWith("image/")) {
-      toast("That file is not a photo.");
+      toast(t("scan.notImage"));
       continue;
     }
     try {
@@ -64,8 +70,8 @@ async function addFiles(files) {
         upload: quality.ok ? toJpeg(img, 1500, 0.85) : null,
         thumb: toJpeg(img, 160, 0.7)
       });
-    } catch (e) {
-      toast(e.message);
+    } catch {
+      toast(t("scan.cantOpen"));
     }
   }
   renderPhotos();
@@ -78,12 +84,12 @@ function renderPhotos() {
   const list = $("#photo-list");
   list.innerHTML = photos.map((p) => `
     <li class="photo-item ${p.quality.ok ? "" : "bad"}">
-      <img src="${p.url}" alt="${esc(PART_LABEL[p.part])} photo">
+      <img src="${p.url}" alt="${esc(partLabel(p.part))}">
       <div class="meta">
-        <strong>${esc(PART_LABEL[p.part])}</strong>
-        ${p.quality.ok ? "✅ Clear photo" : p.quality.problems.map((x) => `⚠️ ${esc(x.text)}`).join("<br>")}
+        <strong>${esc(partLabel(p.part))}</strong>
+        ${p.quality.ok ? `✅ ${esc(t("scan.clear"))}` : p.quality.problems.map((x) => `⚠️ ${esc(t(`q.${x.code}`))}`).join("<br>")}
       </div>
-      <button class="icon-btn" data-remove="${p.id}" aria-label="Remove photo">✕</button>
+      <button class="icon-btn" data-remove="${p.id}" aria-label="${esc(t("scan.remove"))}">✕</button>
     </li>`).join("");
   $$("[data-remove]", list).forEach((b) => b.addEventListener("click", () => {
     const p = photos.find((x) => x.id === b.dataset.remove);
@@ -96,14 +102,18 @@ function renderPhotos() {
   const bad = photos.length - good;
   $("#analyse-btn").disabled = good === 0;
   $("#photo-count").textContent = photos.length === 0
-    ? `Up to ${MAX_PHOTOS} photos. Each photo is checked for blur and light before it is sent.`
-    : `${good} clear photo${good === 1 ? "" : "s"} ready${bad ? `, ${bad} will be skipped. Retake ${bad === 1 ? "it" : "them"} for a better result` : ""}.`;
+    ? t("scan.countEmpty", { max: MAX_PHOTOS })
+    : t("scan.countReady", { good }) + (bad ? " " + t("scan.countSkipped", { bad }) : "");
+}
+
+function renderTips() {
+  $("#tips-list").innerHTML = PHOTO_TIP_KEYS.map((k) => `<li>${esc(t(k))}</li>`).join("");
 }
 
 function fillPlaceSelect() {
   const sel = $("#scan-place");
   const current = sel.value;
-  sel.innerHTML = `<option value="">Not linked to a place</option>` +
+  sel.innerHTML = `<option value="">${esc(t("scan.noPlace"))}</option>` +
     store.getPlaces().map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
   sel.value = current;
 }
@@ -114,12 +124,13 @@ $("#analyse-btn").addEventListener("click", async () => {
   const placeId = $("#scan-place").value;
   const place = store.getPlaces().find((p) => p.id === placeId);
   const result = $("#result");
-  result.innerHTML = `<div class="card loading"><div class="spinner"></div>Checking your plant… this can take up to 20 seconds.</div>`;
+  result.innerHTML = `<div class="card loading"><div class="spinner"></div>${esc(t("scan.loading"))}</div>`;
   result.scrollIntoView({ behavior: "smooth" });
   $("#analyse-btn").disabled = true;
 
   try {
     const res = await identify(good.map((p) => p.upload), place ? { lat: place.lat, lon: place.lon } : null);
+    lastResult = res;
     renderResult(res, result);
     if (res.verdict === "plant") {
       store.addHistory({
@@ -131,84 +142,88 @@ $("#analyse-btn").addEventListener("click", async () => {
       });
     }
   } catch (e) {
+    lastResult = null;
     if (e instanceof ServiceNotConfigured) {
-      result.innerHTML = `<div class="banner warn"><h3>Service not set up</h3>
-        <p>The plant identification service has not been connected yet. Add a Plant.id API key in <a href="#settings" data-goto="settings">Settings</a>.</p></div>`;
-      $("[data-goto]", result)?.addEventListener("click", (ev) => { ev.preventDefault(); showView("settings"); });
+      result.innerHTML = `<div class="banner warn"><h3>${esc(t("err.noService.title"))}</h3>
+        <p>${esc(t("err.noService.body"))}</p>
+        <p><button class="btn small" data-goto="settings">⚙️ ${esc(t("tab.settings"))}</button></p></div>`;
+      $("[data-goto]", result).addEventListener("click", () => showView("settings"));
     } else {
-      const offline = !navigator.onLine;
-      result.innerHTML = `<div class="banner danger"><h3>Could not check the plant</h3>
-        <p>${offline ? "You are offline. Connect to the internet and try again." : esc(e.message || "Something went wrong.")}</p></div>`;
+      const msg = !navigator.onLine ? t("err.offline") : e instanceof ApiError ? t(e.key, e.vars) : t("err.generic");
+      result.innerHTML = `<div class="banner danger"><h3>${esc(t("err.title"))}</h3><p>${esc(msg)}</p></div>`;
     }
   } finally {
     $("#analyse-btn").disabled = photos.filter((p) => p.quality.ok).length === 0;
   }
 });
 
-function expertBox(reason) {
+function expertBox(reasonKey) {
   return `<div class="expert">
-    <strong>👩‍🔬 Ask an agricultural expert</strong>
-    <p>${esc(reason)}</p>
-    <p>📞 <a href="tel:${HELP.kcc.phone}">${HELP.kcc.display}</a>, ${esc(HELP.kcc.label)}<br>
-    🏛️ <a href="${HELP.links[0].url}" target="_blank" rel="noopener">${esc(HELP.links[0].label)}</a></p>
+    <strong>👩‍🔬 ${esc(t("ex.title"))}</strong>
+    <p>${esc(t(reasonKey))}</p>
+    <p>📞 <a href="tel:${HELP.kccPhone}">${HELP.kccDisplay}</a>, ${esc(t("help.kcc"))}<br>
+    🏛️ <a href="${HELP.links[0].url}" target="_blank" rel="noopener">${esc(t(HELP.links[0].key))}</a></p>
   </div>`;
 }
 
 function photoTipsHtml() {
-  return `<ul class="fix-list">${PHOTO_TIPS.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>`;
+  return `<ul class="fix-list">${PHOTO_TIP_KEYS.map((k) => `<li>${esc(t(k))}</li>`).join("")}</ul>`;
 }
+
+const sureBadge = (p) => `<span class="confidence">${esc(t("r.sure", { p: pct(p) }))}</span>`;
 
 function renderResult(res, el, { fromHistory = false } = {}) {
   if (res.verdict === "not_plant") {
-    el.innerHTML = `<div class="banner danger"><h3>🚫 This doesn't look like a plant</h3>
-      <p>Please take a photo of a real plant: a leaf, stem, root or the whole plant.</p>${photoTipsHtml()}</div>`;
+    el.innerHTML = `<div class="banner danger"><h3>🚫 ${esc(t("r.notPlant.title"))}</h3>
+      <p>${esc(t("r.notPlant.body"))}</p>${photoTipsHtml()}</div>`;
     return;
   }
   if (res.verdict === "unclear") {
-    el.innerHTML = `<div class="banner warn"><h3>📷 Photo not clear enough</h3>
-      <p>We can't be sure there is a plant clearly visible in the photo, so we won't guess. Please retake it:</p>${photoTipsHtml()}</div>`;
+    el.innerHTML = `<div class="banner warn"><h3>📷 ${esc(t("r.unclear.title"))}</h3>
+      <p>${esc(t("r.unclear.body"))}</p>${photoTipsHtml()}</div>`;
     return;
   }
 
   let html = "";
 
-  // Plant name
   if (res.plant.status === "sure") {
     const p = res.plant;
     const common = p.commonNames.slice(0, 3).join(", ");
     html += `<div class="card">
-      <h3>🌿 ${esc(common || p.name)} <span class="confidence">${pct(p.probability)} sure</span></h3>
-      <p class="sci">${esc(p.name)}${p.family ? ` · family ${esc(p.family)}` : ""}</p>
+      <h3>🌿 ${esc(common || p.name)} ${sureBadge(p.probability)}</h3>
+      <p class="sci">${esc(p.level === "genus" ? p.genus : p.name)}${p.family ? ` · ${esc(t("r.family", { f: p.family }))}` : ""}</p>
+      ${p.level === "genus" ? `<p class="hint">${esc(t("r.genus", { g: p.genus }))}</p>` : ""}
       ${p.description ? `<p>${esc(p.description.slice(0, 420))}${p.description.length > 420 ? "…" : ""}</p>` : ""}
       ${careFacts(p)}
-      ${p.url ? `<p><a href="${esc(p.url)}" target="_blank" rel="noopener">Read more</a></p>` : ""}
+      ${p.url ? `<p><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(t("r.readMore"))}</a></p>` : ""}
     </div>`;
   } else {
-    html += `<div class="banner warn"><h3>🤔 Not sure which plant this is</h3>
-      <p>The best match was below ${pct(THRESHOLDS.species)} confidence, so we are not naming it. To improve the result, add a photo of the whole plant and a close-up of a leaf${res.plant.best ? "" : ""}, and a flower or fruit if there is one.</p></div>`;
+    html += `<div class="banner warn"><h3>🤔 ${esc(t("r.unsurePlant.title"))}</h3>
+      <p>${esc(t("r.unsurePlant.body", { p: pct(THRESHOLDS.species) }))}</p>
+      ${candidatesHtml(res.plantCandidates, "r.candidates.title", (c) => c.common ? `${c.common} (${c.name})` : c.name)}</div>`;
   }
 
-  // Health
   if (res.health.status === "healthy") {
-    html += `<div class="banner ok"><h3>✅ Looks healthy <span class="confidence">${pct(res.health.probability)} sure</span></h3>
-      <p>No disease, pest or deficiency was found in these photos. Keep an eye on new spots or yellowing.</p></div>`;
+    html += `<div class="banner ok"><h3>✅ ${esc(t("r.healthy.title"))} ${sureBadge(res.health.probability)}</h3>
+      <p>${esc(t("r.healthy.body"))}</p></div>`;
   } else if (res.health.status === "problem") {
     for (const d of res.diseases) html += diseaseCard(d);
   } else {
-    const extra = res.health.status === "unhealthy_unsure"
-      ? "The plant may have a problem, but we can't tell what it is with enough confidence."
-      : "We couldn't tell confidently whether the plant is healthy or not.";
-    html += `<div class="banner warn"><h3>🩺 Health: not sure</h3><p>${extra} We won't guess a disease or treatment.</p>
-      <p>Try close-ups of the affected leaf (top and underside), the stem and the roots.</p>
-      ${expertBox("Show the plant or photos to an expert if the symptoms are spreading.")}</div>`;
+    const extra = res.health.status === "unhealthy_unsure" ? t("r.healthUnsure.maybe") : t("r.healthUnsure.unknown");
+    html += `<div class="banner warn"><h3>🩺 ${esc(t("r.healthUnsure.title"))}</h3>
+      <p>${esc(extra)} ${esc(t("r.healthUnsure.noGuess"))}</p>
+      <p>${esc(t("r.healthUnsure.retake"))}</p>
+      ${candidatesHtml(res.diseaseCandidates, "r.diseaseCandidates.title", (c) => c.name)}
+      ${expertBox("r.healthUnsure.expert")}</div>`;
   }
 
-  if (res.diseases.length && res.uncertainDiseaseCount) {
-    html += `<p class="hint">There ${res.uncertainDiseaseCount === 1 ? "was 1 other possible problem" : `were ${res.uncertainDiseaseCount} other possible problems`} below our confidence level. These are not shown.</p>`;
+  if (res.diseases.length && res.diseaseCandidates?.length) {
+    html += `<div class="card">${candidatesHtml(res.diseaseCandidates, "r.diseaseCandidates.title", (c) => c.name)}</div>`;
   }
+  if (res.sources?.length) html += `<p class="hint">${esc(t("r.source", { s: res.sources.join(" + ") }))}</p>`;
 
   if (!fromHistory) {
-    html += `<div class="row space"><button class="btn small" id="share-btn">↗ Share result</button><button class="btn small" id="new-scan">＋ New scan</button></div>`;
+    html += `<div class="row space"><button class="btn small" id="share-btn">↗ ${esc(t("r.share"))}</button><button class="btn small" id="new-scan">＋ ${esc(t("r.newScan"))}</button></div>`;
   }
   el.innerHTML = html;
 
@@ -216,78 +231,83 @@ function renderResult(res, el, { fromHistory = false } = {}) {
   $("#new-scan", el)?.addEventListener("click", () => {
     photos.forEach((p) => URL.revokeObjectURL(p.url));
     photos = [];
+    lastResult = null;
     renderPhotos();
     el.innerHTML = "";
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 }
 
+function candidatesHtml(list, titleKey, label) {
+  if (!list?.length) return "";
+  return `<details class="candidates"><summary>${esc(t(titleKey))}</summary>
+    <p class="hint">${esc(t("r.candidates.note"))}</p>
+    <ul class="fix-list">${list.map((c) => `<li>${esc(label(c))}: ${pct(c.probability)}</li>`).join("")}</ul></details>`;
+}
+
 function careFacts(p) {
   const rows = [];
   if (p.watering && typeof p.watering === "object" && p.watering.min != null) {
-    const lvl = ["", "Dry soil (little water)", "Medium (keep slightly moist)", "Wet (lots of water)"];
-    rows.push(["Water", lvl[p.watering.max] || lvl[p.watering.min] || ""]);
+    const lvl = p.watering.max || p.watering.min;
+    if (lvl >= 1 && lvl <= 3) rows.push([t("r.water"), t(`r.water.${lvl}`)]);
   }
-  if (p.light) rows.push(["Light", p.light]);
-  if (p.soil) rows.push(["Soil", p.soil]);
-  if (p.toxicity) rows.push(["Toxicity", p.toxicity]);
+  if (p.light) rows.push([t("r.light"), p.light]);
+  if (p.soil) rows.push([t("r.soil"), p.soil]);
+  if (p.toxicity) rows.push([t("r.toxicity"), p.toxicity]);
   const filtered = rows.filter((r) => r[1]);
   if (!filtered.length) return "";
-  return `<table class="guide-table">${filtered.map(([k, v]) => `<tr><th>${k}</th><td>${esc(String(v).slice(0, 300))}</td></tr>`).join("")}</table>`;
+  return `<table class="guide-table">${filtered.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(String(v).slice(0, 300))}</td></tr>`).join("")}</table>`;
 }
 
 function diseaseCard(d) {
   const nutrient = d.deficiency ? matchNutrient(d.deficiency) : null;
   const kinds = (d.classification || []).join(", ");
-  let html = `<div class="banner danger"><h3>🩺 ${esc(d.name)} <span class="confidence">${pct(d.probability)} sure</span></h3>`;
-  if (kinds) html += `<p class="hint">Type: ${esc(kinds)}</p>`;
+  let html = `<div class="banner danger"><h3>🩺 ${esc(d.name)} ${sureBadge(d.probability)}</h3>`;
+  if (kinds) html += `<p class="hint">${esc(t("r.type", { t: kinds }))}</p>`;
   if (d.description) html += `<p>${esc(d.description.slice(0, 500))}${d.description.length > 500 ? "…" : ""}</p>`;
-  if (d.cause) html += `<p><strong>Cause:</strong> ${esc(d.cause)}</p>`;
+  if (d.scientific) html += `<p class="sci">${esc(d.scientific)}</p>`;
+  if (d.symptoms?.length) html += `<p><strong>${esc(t("r.symptoms"))}</strong> ${esc(d.symptoms.join(" "))}</p>`;
+  if (d.cause) html += `<p><strong>${esc(t("r.cause"))}</strong> ${esc(d.cause)}</p>`;
 
   if (d.deficiency) {
     if (nutrient) {
-      html += `<p><strong>Mineral needed:</strong> ${esc(nutrient.name)}</p>
-        <p><strong>Typical signs:</strong> ${esc(nutrient.signs)}</p>
-        <p><strong>First step (no chemicals):</strong> ${esc(nutrient.firstStep)}</p>`;
+      html += `<p><strong>${esc(t("r.mineral"))}</strong> ${esc(t(`nut.${nutrient.id}.name`))}</p>
+        <p><strong>${esc(t("r.signs"))}</strong> ${esc(t(`nut.${nutrient.id}.signs`))}</p>
+        <p><strong>${esc(t("r.firstStep"))}</strong> ${esc(t(`nut.${nutrient.id}.step`))}</p>`;
     } else {
-      html += `<p>The photos show a nutrient deficiency, but not which mineral with certainty. A soil test will tell you exactly what is missing.</p>`;
+      html += `<p>${esc(t("r.defUnknown"))}</p>`;
     }
   }
 
   if (d.primaryFix.length) {
-    html += `<p><strong>Primary fix:</strong></p><ul class="fix-list">${d.primaryFix.slice(0, 6).map((t) => `<li>${esc(t)}</li>`).join("")}</ul>`;
+    html += `<p><strong>${esc(t("r.primaryFix"))}</strong></p><ul class="fix-list">${d.primaryFix.slice(0, 6).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
   }
 
-  html += expertBox(
-    d.deficiency
-      ? "For the right fertiliser and the amount to use, get a soil test and ask an agricultural scientist. Wrong doses can burn roots or harm the soil."
-      : d.hasChemicalOptions
-        ? "Chemical treatments exist for this problem. Please don't buy or spray any pesticide, fungicide or fertiliser without advice from an agricultural scientist; they will confirm the problem and give a safe product and dose."
-        : "If the problem keeps spreading after the steps above, show the plant to an agricultural scientist."
-  );
-  if (d.url) html += `<p><a href="${esc(d.url)}" target="_blank" rel="noopener">Learn more</a></p>`;
+  html += expertBox(d.deficiency ? "ex.def" : d.hasChemicalOptions ? "ex.chem" : "ex.spread");
+  if (d.url) html += `<p><a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(t("r.learnMore"))}</a></p>`;
   html += `</div>`;
   return html;
 }
 
 async function shareResult(res) {
-  const lines = ["Paudha plant check"];
-  if (res.plant.status === "sure") lines.push(`Plant: ${res.plant.commonNames[0] || res.plant.name} (${res.plant.name}), ${pct(res.plant.probability)} sure`);
-  else lines.push("Plant: not sure");
-  if (res.health.status === "healthy") lines.push("Health: looks healthy");
-  else if (res.diseases.length) res.diseases.forEach((d) => lines.push(`Problem: ${d.name}, ${pct(d.probability)} sure`));
-  else lines.push("Health: not sure");
+  const lines = ["Paudha"];
+  if (res.plant.status === "sure") lines.push(`${t("r.plant")}: ${res.plant.commonNames[0] || res.plant.name} (${res.plant.name}), ${t("r.sure", { p: pct(res.plant.probability) })}`);
+  else lines.push(`${t("r.plant")}: ${t("r.notSure")}`);
+  if (res.health.status === "healthy") lines.push(`${t("r.health")}: ${t("r.healthy.title")}`);
+  else if (res.diseases.length) res.diseases.forEach((d) => lines.push(`${t("r.problem")}: ${d.name}, ${t("r.sure", { p: pct(d.probability) })}`));
+  else lines.push(`${t("r.health")}: ${t("r.notSure")}`);
   const text = lines.join("\n");
   try {
-    if (navigator.share) await navigator.share({ title: "Paudha plant check", text });
-    else { await navigator.clipboard.writeText(text); toast("Result copied."); }
+    if (navigator.share) await navigator.share({ title: "Paudha", text });
+    else { await navigator.clipboard.writeText(text); toast(t("r.copied")); }
   } catch { /* cancelled */ }
 }
 
 /* ---------------- Places & weather ---------------- */
 async function searchPlaces(q) {
   const base = "https://geocoding-api.open-meteo.com/v1/search";
-  const url = (cc) => `${base}?${new URLSearchParams({ name: q, count: "8", language: "en", format: "json", ...(cc ? { countryCode: cc } : {}) })}`;
+  const lang = ["en", "hi", "bn", "mr", "ta", "te", "kn", "ml", "gu", "pa", "or"].includes(getLang()) ? getLang() : "en";
+  const url = (cc) => `${base}?${new URLSearchParams({ name: q, count: "8", language: lang, format: "json", ...(cc ? { countryCode: cc } : {}) })}`;
   let res = await fetch(url("IN")).then((r) => r.json());
   if (!res.results?.length) res = await fetch(url("")).then((r) => r.json());
   return res.results || [];
@@ -300,10 +320,10 @@ async function doSearch() {
   const q = $("#place-search").value.trim();
   const list = $("#place-results");
   if (q.length < 2) return;
-  list.innerHTML = `<li class="hint">Searching…</li>`;
+  list.innerHTML = `<li class="hint">${esc(t("places.searching"))}</li>`;
   try {
     const results = await searchPlaces(q);
-    if (!results.length) { list.innerHTML = `<li class="hint">No places found. Try the nearest town, or use your current location.</li>`; return; }
+    if (!results.length) { list.innerHTML = `<li class="hint">${esc(t("places.noResults"))}</li>`; return; }
     list.innerHTML = results.map((r, i) => `<li><button data-i="${i}">${esc(r.name)}<span class="place-sub">, ${esc([r.admin2, r.admin1, r.country].filter(Boolean).join(", "))}</span></button></li>`).join("");
     $$("button", list).forEach((b) => b.addEventListener("click", () => {
       const r = results[+b.dataset.i];
@@ -312,28 +332,28 @@ async function doSearch() {
       $("#place-search").value = "";
     }));
   } catch {
-    list.innerHTML = `<li class="hint">Search failed. Check your internet connection.</li>`;
+    list.innerHTML = `<li class="hint">${esc(t("places.searchFailed"))}</li>`;
   }
 }
 
 $("#use-location").addEventListener("click", () => {
-  if (!navigator.geolocation) return toast("Location is not available on this device.");
-  toast("Getting your location…");
+  if (!navigator.geolocation) return toast(t("places.noGeo"));
+  toast(t("places.gettingLoc"));
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       const { latitude: lat, longitude: lon } = pos.coords;
-      savePlace({ name: "My plants here", region: `${lat.toFixed(3)}, ${lon.toFixed(3)}`, lat, lon });
+      savePlace({ name: t("places.myLocation"), region: `${lat.toFixed(3)}, ${lon.toFixed(3)}`, lat, lon });
     },
-    () => toast("Couldn't get your location. Allow location access, or search by name."),
+    () => toast(t("places.locFailed")),
     { enableHighAccuracy: true, timeout: 15000 }
   );
 });
 
 async function savePlace(p) {
   const place = store.addPlace(p);
-  syncPlacesForWorker();
+  syncWorkerState();
   fillPlaceSelect();
-  toast(`Saved ${place.name}.`);
+  toast(t("places.saved", { name: place.name }));
   await refreshForecast(place);
   renderPlaces();
 }
@@ -349,35 +369,36 @@ async function refreshForecast(place) {
 }
 
 async function refreshAll({ notify = true } = {}) {
-  const places = store.getPlaces();
-  await Promise.all(places.map(refreshForecast));
-  renderPlaces();
+  await Promise.all(store.getPlaces().map(refreshForecast));
+  if (currentView === "places") renderPlaces();
   updateBadge();
   if (notify) await sendDueNotifications();
-  syncPlacesForWorker();
+  syncWorkerState();
 }
 
 $("#refresh-weather").addEventListener("click", async () => {
-  toast("Updating forecasts…");
+  toast(t("places.updating"));
   await refreshAll();
-  toast("Forecasts updated.");
+  toast(t("places.updated"));
 });
 
 function renderPlaces() {
   fillPlaceSelect();
+  updateNotifyButton();
   const places = store.getPlaces();
   const forecasts = store.getForecasts();
   const list = $("#places-list");
   if (!places.length) {
-    list.innerHTML = `<div class="card"><p class="muted">No places saved yet. Add your garden, farm or balcony above.</p></div>`;
+    list.innerHTML = `<div class="card"><p class="muted">${esc(t("places.empty"))}</p></div>`;
     $("#alert-summary").innerHTML = "";
+    updateBadge();
     return;
   }
 
   let total = 0;
   list.innerHTML = places.map((p) => {
     const f = forecasts[p.id];
-    const events = f ? W.analyse(f) : [];
+    const events = f ? W.analyse(f, t) : [];
     const soon = events.filter((e) => e.daysAhead <= 7);
     const later = events.filter((e) => e.daysAhead > 7);
     total += soon.length;
@@ -385,50 +406,48 @@ function renderPlaces() {
     const today = f ? W.todayIn(f.timezone) : "";
 
     const strip = f ? `<div class="forecast">${f.days.filter((d) => W.daysBetween(today, d.date) >= 0).slice(0, 10).map((d) => {
-      const [icon, label] = W.WX[d.code] || ["🌡️", ""];
-      const dt = new Date(d.date + "T00:00:00");
-      return `<div class="day ${hazardDates.has(d.date) ? "hazard" : ""}" title="${esc(label)}">
-        <div>${dt.toLocaleDateString(undefined, { weekday: "short" })}</div><div class="wx">${icon}</div>
+      const [icon] = W.WX[d.code] || ["🌡️"];
+      return `<div class="day ${hazardDates.has(d.date) ? "hazard" : ""}">
+        <div>${esc(fmtDate(d.date, { weekday: "short" }))}</div><div class="wx">${icon}</div>
         <div>${Math.round(d.tmax)}° / ${Math.round(d.tmin)}°</div><div>${d.rain >= 0.5 ? `${Math.round(d.rain)} mm` : "&nbsp;"}</div></div>`;
-    }).join("")}</div>` : `<p class="hint">Forecast not loaded yet.</p>`;
+    }).join("")}</div>` : `<p class="hint">${esc(t("places.noForecast"))}</p>`;
 
     const alertHtml = (e) => `<div class="alert ${e.severe ? "severe" : ""}">
-      <strong>${e.severe ? "🔴" : "🟠"} ${esc(e.title)}: ${W.whenText(e.daysAhead)}</strong>
-      <span class="when">${esc(e.detail)} · ${new Date(e.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" })}${e.lowConfidence ? " · early forecast, may change" : ""}</span>
+      <strong>${e.severe ? "🔴" : "🟠"} ${esc(e.title)}: ${esc(W.whenText(e.daysAhead, t))}</strong>
+      <span class="when">${esc(e.detail)} · ${esc(fmtDate(e.date, { weekday: "long", day: "numeric", month: "short" }))}${e.lowConfidence ? ` · ${esc(t("places.early"))}` : ""}</span>
       <ul>${e.advice.map((a) => `<li>${esc(a)}</li>`).join("")}</ul></div>`;
 
     return `<div class="card place-card" data-id="${p.id}">
       <header>
         <div><h3>${esc(p.name)}</h3><div class="place-sub">${esc(p.region || "")}</div></div>
-        <button class="icon-btn" data-del="${p.id}" aria-label="Remove place">🗑️</button>
+        <button class="icon-btn" data-del="${p.id}" aria-label="${esc(t("places.remove"))}">🗑️</button>
       </header>
       ${strip}
-      ${soon.length ? soon.map(alertHtml).join("") : f ? `<p class="hint">✅ No weather danger for your plants in the next 7 days.</p>` : ""}
-      ${later.length ? `<details><summary class="hint">${later.length} possible later event${later.length > 1 ? "s" : ""} (8 to 16 days, less certain)</summary>${later.map(alertHtml).join("")}</details>` : ""}
-      <div class="plant-tags">${(p.plants || []).map((pl, i) => `<span class="tag">🌱 ${esc(pl)}<button data-rmplant="${i}" aria-label="Remove">✕</button></span>`).join("")}</div>
-      <div class="row"><input type="text" placeholder="Add a plant here (e.g. Tomato, Tulsi)" data-plant-input><button class="btn small" data-addplant>Add</button></div>
-      <details><summary class="hint">Rename or add notes</summary>
-        <label class="field-label">Name</label><input type="text" data-rename value="${esc(p.name)}">
-        <label class="field-label">Notes</label><textarea rows="3" data-notes placeholder="Soil type, when you last added compost, etc.">${esc(p.notes || "")}</textarea>
-        <button class="btn small" data-savedetails style="margin-top:8px">Save</button>
+      ${soon.length ? soon.map(alertHtml).join("") : f ? `<p class="hint">✅ ${esc(t("places.noDanger"))}</p>` : ""}
+      ${later.length ? `<details><summary class="hint">${esc(t("places.later", { n: later.length }))}</summary>${later.map(alertHtml).join("")}</details>` : ""}
+      <div class="plant-tags">${(p.plants || []).map((pl, i) => `<span class="tag">🌱 ${esc(pl)}<button data-rmplant="${i}" aria-label="✕">✕</button></span>`).join("")}</div>
+      <div class="row"><input type="text" placeholder="${esc(t("places.addPlantPh"))}" data-plant-input><button class="btn small" data-addplant>${esc(t("places.addPlant"))}</button></div>
+      <details><summary class="hint">${esc(t("places.details"))}</summary>
+        <label class="field-label">${esc(t("places.name"))}</label><input type="text" data-rename value="${esc(p.name)}">
+        <label class="field-label">${esc(t("places.notes"))}</label><textarea rows="3" data-notes placeholder="${esc(t("places.notesPh"))}">${esc(p.notes || "")}</textarea>
+        <button class="btn small" data-savedetails style="margin-top:8px">${esc(t("places.save"))}</button>
       </details>
-      ${f ? `<p class="hint">Updated ${new Date(f.fetchedAt).toLocaleString()} · weather data from Open-Meteo</p>` : ""}
+      ${f ? `<p class="hint">${esc(t("places.updatedAt", { when: fmtDateTime(f.fetchedAt) }))}</p>` : ""}
     </div>`;
   }).join("");
 
   $("#alert-summary").innerHTML = total
-    ? `<div class="banner warn"><strong>⚠️ ${total} weather warning${total > 1 ? "s" : ""} in the next 7 days</strong> for your saved places. Details below.</div>`
+    ? `<div class="banner warn"><strong>⚠️ ${esc(t("places.summary", { n: total }))}</strong></div>`
     : "";
 
   $$(".place-card", list).forEach((card) => {
     const id = card.dataset.id;
     const place = () => store.getPlaces().find((x) => x.id === id);
     $("[data-del]", card).addEventListener("click", () => {
-      if (!confirm(`Remove ${place().name}?`)) return;
+      if (!confirm(t("places.removeQ", { name: place().name }))) return;
       store.removePlace(id);
-      syncPlacesForWorker();
+      syncWorkerState();
       renderPlaces();
-      updateBadge();
     });
     const input = $("[data-plant-input]", card);
     const add = () => {
@@ -447,9 +466,9 @@ function renderPlaces() {
     }));
     $("[data-savedetails]", card).addEventListener("click", () => {
       store.updatePlace(id, { name: $("[data-rename]", card).value.trim() || place().name, notes: $("[data-notes]", card).value });
-      syncPlacesForWorker();
+      syncWorkerState();
       renderPlaces();
-      toast("Saved.");
+      toast(t("places.savedShort"));
     });
   });
   updateBadge();
@@ -469,7 +488,7 @@ function updateBadge() {
 /* Notifications */
 async function sendDueNotifications() {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
-  const due = W.dueNotifications(store.getPlaces(), store.getForecasts(), store.getNotified());
+  const due = W.dueNotifications(store.getPlaces(), store.getForecasts(), store.getNotified(), t);
   const reg = await navigator.serviceWorker?.getRegistration();
   for (const n of due) {
     const opts = { body: n.body, icon: "icons/icon-192.png", badge: "icons/icon-192.png", tag: n.key, data: { url: "./#places" } };
@@ -482,18 +501,18 @@ async function sendDueNotifications() {
 }
 
 $("#enable-notify").addEventListener("click", async () => {
-  if (!("Notification" in window)) return toast("This browser can't show alerts. The warnings will still appear in the app.");
+  if (!("Notification" in window)) return toast(t("notify.unsupported"));
   const perm = await Notification.requestPermission();
-  if (perm !== "granted") return toast("Alerts are off. You can still see warnings here.");
+  if (perm !== "granted") return toast(t("notify.denied"));
   await registerPeriodicSync();
   updateNotifyButton();
-  toast("Alerts on. You'll be warned 7, 5, 3, 2 and 1 day before bad weather.");
+  toast(t("notify.on"));
   await sendDueNotifications();
 });
 
 function updateNotifyButton() {
   const on = "Notification" in window && Notification.permission === "granted";
-  $("#enable-notify").textContent = on ? "🔔 Alerts on" : "🔔 Turn on alerts";
+  $("#enable-notify").textContent = `🔔 ${on ? t("places.alertsOn") : t("places.alertsOff")}`;
   $("#enable-notify").disabled = on;
 }
 
@@ -508,10 +527,10 @@ async function registerPeriodicSync() {
 }
 
 // The service worker can't read localStorage, so mirror the data it needs.
-async function syncPlacesForWorker() {
+async function syncWorkerState() {
   try {
     const cache = await caches.open("paudha-data");
-    const body = JSON.stringify({ places: store.getPlaces(), notified: store.getNotified() });
+    const body = JSON.stringify({ places: store.getPlaces(), notified: store.getNotified(), lang: getLang() });
     await cache.put("data/state.json", new Response(body, { headers: { "Content-Type": "application/json" } }));
   } catch { /* ignore */ }
 }
@@ -521,23 +540,23 @@ function renderHistory() {
   const list = $("#history-list");
   const items = store.getHistory();
   if (!items.length) {
-    list.innerHTML = `<div class="card"><p class="muted">No scans yet.</p></div>`;
+    list.innerHTML = `<div class="card"><p class="muted">${esc(t("history.empty"))}</p></div>`;
     return;
   }
   list.innerHTML = items.map((h) => {
     const r = h.result;
-    const name = r.plant.status === "sure" ? (r.plant.commonNames[0] || r.plant.name) : "Plant not identified";
-    const health = r.health.status === "healthy" ? "Looks healthy" : r.diseases?.length ? r.diseases.map((d) => d.name).join(", ") : "Health not sure";
+    const name = r.plant.status === "sure" ? (r.plant.commonNames[0] || r.plant.name) : t("history.unknownPlant");
+    const health = r.health.status === "healthy" ? t("history.healthy") : r.diseases?.length ? r.diseases.map((d) => d.name).join(", ") : t("history.unsure");
     return `<div class="card">
       <div class="history-item">
         <img src="${h.thumb}" alt="">
         <div>
           <strong>${esc(name)}</strong><br>${esc(health)}
-          <div class="when">${new Date(h.at).toLocaleString()}${h.placeName ? ` · ${esc(h.placeName)}` : ""} · ${h.parts.map((p) => PART_LABEL[p]).join(", ")}</div>
+          <div class="when">${esc(fmtDateTime(h.at))}${h.placeName ? ` · ${esc(h.placeName)}` : ""} · ${esc(h.parts.map(partLabel).join(", "))}</div>
         </div>
       </div>
-      <details><summary class="hint">Show full result</summary><div data-full="${h.id}"></div></details>
-      <button class="btn small danger" data-rmhist="${h.id}">Delete</button>
+      <details><summary class="hint">${esc(t("history.full"))}</summary><div data-full="${h.id}"></div></details>
+      <button class="btn small danger" data-rmhist="${h.id}">${esc(t("history.delete"))}</button>
     </div>`;
   }).join("");
   $$("details", list).forEach((d) => d.addEventListener("toggle", () => {
@@ -552,42 +571,34 @@ function renderHistory() {
 
 /* ---------------- Guide ---------------- */
 function renderGuide() {
-  const rules = W.RULES;
   $("#guide-content").innerHTML = `
     <div class="card">
-      <h3>📞 Talk to an expert</h3>
-      <p>Paudha never prescribes chemicals or fertiliser doses. For those, please talk to an agricultural scientist:</p>
-      <p><a class="btn primary" href="tel:${HELP.kcc.phone}">Call ${HELP.kcc.display}</a></p>
-      <p class="hint">${esc(HELP.kcc.label)}</p>
-      <ul>${HELP.links.map((l) => `<li><a href="${l.url}" target="_blank" rel="noopener">${esc(l.label)}</a></li>`).join("")}</ul>
+      <h3>📞 ${esc(t("guide.expert"))}</h3>
+      <p>${esc(t("guide.expertBody"))}</p>
+      <p><a class="btn primary" href="tel:${HELP.kccPhone}">${esc(t("guide.call", { n: HELP.kccDisplay }))}</a></p>
+      <p class="hint">${esc(t("help.kcc"))}</p>
+      <ul>${HELP.links.map((l) => `<li><a href="${l.url}" target="_blank" rel="noopener">${esc(t(l.key))}</a></li>`).join("")}</ul>
     </div>
     <div class="card">
-      <h3>📸 Taking a good photo</h3>
-      <ul class="fix-list">${PHOTO_TIPS.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
+      <h3>📸 ${esc(t("guide.photo"))}</h3>
+      ${photoTipsHtml()}
     </div>
     <div class="card">
-      <h3>🧪 Signs of mineral deficiency</h3>
-      <p class="hint">For learning only. Several problems look alike, so confirm with a soil test or an expert before adding anything.</p>
-      <table class="guide-table"><tr><th>Mineral</th><th>Signs</th></tr>
-      ${NUTRIENTS.map((n) => `<tr><td><strong>${esc(n.name)}</strong></td><td>${esc(n.signs)}</td></tr>`).join("")}</table>
-      <p class="hint">Tip: problems on <strong>older</strong> leaves first usually point to nitrogen, phosphorus, potassium or magnesium. Problems on <strong>new</strong> leaves first point to iron, zinc, calcium, sulphur, boron or manganese.</p>
+      <h3>🧪 ${esc(t("guide.def"))}</h3>
+      <p class="hint">${esc(t("guide.defNote"))}</p>
+      <table class="guide-table"><tr><th>${esc(t("guide.mineral"))}</th><th>${esc(t("guide.signs"))}</th></tr>
+      ${NUTRIENTS.map((n) => `<tr><td><strong>${esc(t(`nut.${n.id}.name`))}</strong></td><td>${esc(t(`nut.${n.id}.signs`))}</td></tr>`).join("")}</table>
+      <p class="hint">${esc(t("guide.defTip"))}</p>
     </div>
     <div class="card">
-      <h3>🌦️ When we warn you</h3>
-      <p>We check the 16-day forecast for each saved place and alert you ${W.MILESTONES.join(", ")} day(s) before:</p>
-      <ul class="fix-list">
-        <li>Heavy rain: 64.5 mm or more in a day (IMD "heavy"); very heavy from 115.6 mm, extremely heavy from 204.5 mm</li>
-        <li>Heatwave: 40°C or more; severe from 45°C</li>
-        <li>Cold night: 6°C or less; frost risk at 2°C or less</li>
-        <li>Thunderstorms and hail</li>
-        <li>Strong wind gusts: 60 km/h or more; damaging from 90 km/h</li>
-        <li>Long dry spell: 7+ hot days (35°C+) in a row with no rain</li>
-      </ul>
-      <p class="hint">Forecasts more than a week ahead can change. For official warnings, check IMD. ${rules.length} weather rules active.</p>
+      <h3>🌦️ ${esc(t("guide.weather"))}</h3>
+      <p>${esc(t("guide.weatherIntro"))}</p>
+      <ul class="fix-list">${["guide.w1", "guide.w2", "guide.w3", "guide.w4", "guide.w5", "guide.w6"].map((k) => `<li>${esc(t(k))}</li>`).join("")}</ul>
+      <p class="hint">${esc(t("guide.weatherNote"))}</p>
     </div>
     <div class="card">
-      <h3>ℹ️ About the results</h3>
-      <p>Photos are analysed by the Plant.id service. Paudha only shows a name, disease or deficiency when the analysis is very confident. Results are a guide, not a lab test.</p>
+      <h3>ℹ️ ${esc(t("guide.about"))}</h3>
+      <p>${esc(t("guide.aboutBody"))}</p>
     </div>`;
 }
 
@@ -595,27 +606,29 @@ function renderGuide() {
 function renderSettings() {
   const s = store.getSettings();
   const mode = serviceMode();
-  $("#service-status").textContent = mode === "proxy"
-    ? "✅ Connected through this app's server. No key needed."
-    : mode === "key" ? "✅ Using the API key saved on this phone." : "⚠️ Service not set up. Paste a Plant.id API key below.";
+  $("#service-status").textContent = mode === "proxy" ? `✅ ${t("settings.proxy")}` : mode === "key" ? `✅ ${t("settings.keyMode")}` : `⚠️ ${t("settings.none")}`;
   $("#api-key").value = s.apiKey ? "••••••••" : "";
-  $("#name-lang").value = s.nameLang || "en";
-  $("#threshold-list").innerHTML = `
-    <li>Photo shows a plant: ${pct(THRESHOLDS.isPlant)}</li>
-    <li>Plant name: ${pct(THRESHOLDS.species)}</li>
-    <li>"Looks healthy": ${pct(THRESHOLDS.healthy)}</li>
-    <li>Disease, pest or deficiency: ${pct(THRESHOLDS.disease)}</li>`;
+  $("#crop-key").value = s.cropKey ? "••••••••" : "";
+  $("#threshold-list").innerHTML = [
+    t("settings.sure.plant", { p: pct(THRESHOLDS.isPlant) }),
+    t("settings.sure.species", { p: pct(THRESHOLDS.species) }),
+    t("settings.sure.healthy", { p: pct(THRESHOLDS.healthy) }),
+    t("settings.sure.disease", { p: pct(THRESHOLDS.disease) })
+  ].map((x) => `<li>${esc(x)}</li>`).join("");
 }
 
 $("#save-key").addEventListener("click", () => {
-  const v = $("#api-key").value.trim();
-  if (v && !v.startsWith("•")) { store.saveSettings({ apiKey: v }); toast("Key saved on this phone."); }
-  else if (!v) { store.saveSettings({ apiKey: "" }); toast("Key removed."); }
+  let changed = false;
+  for (const [id, field] of [["#api-key", "apiKey"], ["#crop-key", "cropKey"]]) {
+    const v = $(id).value.trim();
+    if (v.startsWith("•")) continue;
+    if (v !== (store.getSettings()[field] || "")) { store.saveSettings({ [field]: v }); changed = true; }
+  }
+  if (changed) toast(t("settings.keySaved"));
   renderSettings();
 });
-$("#name-lang").addEventListener("change", (e) => { store.saveSettings({ nameLang: e.target.value }); toast("Saved."); });
 $("#clear-history").addEventListener("click", () => {
-  if (confirm("Delete all saved scans?")) { store.clearHistory(); toast("History cleared."); }
+  if (confirm(t("settings.clearQ"))) { store.clearHistory(); toast(t("settings.cleared")); }
 });
 $("#export-data").addEventListener("click", () => {
   const blob = new Blob([JSON.stringify(store.exportAll(), null, 2)], { type: "application/json" });
@@ -626,6 +639,50 @@ $("#export-data").addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
 
+/* ---------------- Language ---------------- */
+function fillLangSelects() {
+  const opts = LANGS.map((l) => `<option value="${l.code}">${l.name}${l.code === "en" ? "" : ` (${l.en})`}</option>`).join("");
+  for (const sel of [$("#app-lang"), $("#top-lang")]) {
+    sel.innerHTML = opts;
+    sel.value = getLang();
+  }
+}
+
+// Re-draw everything that is built from JavaScript.
+function renderAll() {
+  fillLangSelects();
+  renderTips();
+  renderPhotos();
+  renderGuide();
+  fillPlaceSelect();
+  updateNotifyButton();
+  if (lastResult) renderResult(lastResult, $("#result"));
+  if (currentView === "places") renderPlaces();
+  if (currentView === "history") renderHistory();
+  if (currentView === "settings") renderSettings();
+}
+
+async function changeLang(code) {
+  await setLang(code);
+  renderAll();
+  syncWorkerState();
+}
+$("#app-lang").addEventListener("change", (e) => changeLang(e.target.value).then(() => toast(t("settings.saved"))));
+$("#top-lang").addEventListener("change", (e) => changeLang(e.target.value));
+
+function showLangPicker() {
+  const overlay = document.createElement("div");
+  overlay.className = "lang-overlay";
+  overlay.innerHTML = `<img src="icons/icon.svg" alt="" style="width:64px;display:block;margin:0 auto">
+    <h2>भाषा चुनें · Choose your language</h2>
+    <div class="lang-grid">${LANGS.map((l) => `<button data-code="${l.code}">${l.name}<small>${l.en}</small></button>`).join("")}</div>`;
+  document.body.appendChild(overlay);
+  $$("button", overlay).forEach((b) => b.addEventListener("click", async () => {
+    await changeLang(b.dataset.code);
+    overlay.remove();
+  }));
+}
+
 /* ---------------- Start ---------------- */
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
@@ -634,19 +691,20 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-renderGuide();
-renderPhotos();
-fillPlaceSelect();
-updateNotifyButton();
-updateBadge();
-const start = location.hash.slice(1);
-if (["scan", "places", "history", "guide", "settings"].includes(start)) showView(start);
+(async function start() {
+  const saved = store.getSettings().lang;
+  await setLang(saved || "en", { save: Boolean(saved) });
+  renderAll();
+  updateBadge();
+  if (!hasChosenLang()) showLangPicker();
 
-// Refresh forecasts at most every 3 hours when the app opens.
-const lastFetch = Math.min(...Object.values(store.getForecasts()).map((f) => Date.parse(f.fetchedAt)), Date.now());
-if (store.getPlaces().length && Date.now() - lastFetch > 3 * 3600e3 || store.getPlaces().some((p) => !store.getForecasts()[p.id])) {
-  refreshAll();
-} else {
-  sendDueNotifications();
-}
+  const startView = location.hash.slice(1);
+  if (["scan", "places", "history", "guide", "settings"].includes(startView)) showView(startView);
 
+  // Refresh forecasts at most every 3 hours when the app opens.
+  const forecasts = store.getForecasts();
+  const places = store.getPlaces();
+  const lastFetch = Math.min(Date.now(), ...Object.values(forecasts).map((f) => Date.parse(f.fetchedAt)));
+  if (places.some((p) => !forecasts[p.id]) || (places.length && Date.now() - lastFetch > 3 * 3600e3)) refreshAll();
+  else sendDueNotifications();
+})();

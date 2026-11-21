@@ -18,18 +18,26 @@ A mobile-friendly web app for identifying Indian plants and checking their healt
 - **Photo checks on the phone** before anything is sent: too small, too dark, too bright, low detail and blurry photos are rejected with tips. Non-plant photos are rejected.
 - **Saved plant places** (search by name or use GPS), with a 10-day forecast and **warnings 7, 5, 3, 2 and 1 day before** heavy rain (IMD thresholds), heatwave, cold/frost, thunderstorm/hail, strong wind and long hot dry spells, plus what to do for your plants.
 - **Alerts** as phone notifications when the app is opened, and in the background on Android Chrome when installed.
-- Scan history, plant list and notes per place, plant names in 10 Indian languages, deficiency guide, share results, export data, works offline as an installable app, dark mode.
+- The whole app in English, Hindi, Bengali and Marathi (more Indian languages being added), chosen on first launch.
+- Scan history, plant list and notes per place, deficiency guide, share results, export data, works offline as an installable app, dark mode.
 
 ## Setup
 
 The app is static (HTML/CSS/JS, no build step) and is deployed to GitHub Pages by `.github/workflows/pages.yml` on every push to `main`.
 
-Identification uses the [Plant.id API](https://www.kindwise.com/plant-id) (identification + health assessment). Weather uses [Open-Meteo](https://open-meteo.com/) (free, no key).
+Identification uses two Kindwise services:
 
-Choose one way to provide the Plant.id key:
+- [Plant.id](https://www.kindwise.com/plant-id): plant identification + general plant health (garden, house plants, trees).
+- [crop.health](https://www.kindwise.com/crop-health) (recommended): crop identification and crop diseases (wheat, rice, cotton, pulses, vegetables). Field-crop diseases such as wheat yellow rust are detected far more reliably here.
 
-1. **Server function (recommended for public use).** Deploy this repo to Vercel, set `PLANT_ID_API_KEY` (and optionally `ALLOWED_ORIGIN=https://anushka180712.github.io`) in the project's environment variables, then set `proxyUrl` in `config.js` to `https://<your-vercel-app>.vercel.app/api/identify`.
-2. **Key on the phone.** Open Settings in the app and paste a Plant.id key. It is stored only on that device.
+When both keys are set, both are asked in parallel and the confident answers are combined. If close species split the score (e.g. bread wheat vs durum wheat), the genus is named when the genus as a whole clears the bar. Lower-scoring candidates are shown separately as "possible matches (not confirmed)".
+
+Weather uses [Open-Meteo](https://open-meteo.com/) (free, no key).
+
+Choose one way to provide the keys:
+
+1. **Server functions (recommended for public use).** Deploy this repo to Vercel, set `PLANT_ID_API_KEY` and `CROP_HEALTH_API_KEY` (and optionally `ALLOWED_ORIGIN=https://anushka180712.github.io`), then set `proxyUrl` to `https://<your-vercel-app>.vercel.app/api/identify` and `cropProxyUrl` to `https://<your-vercel-app>.vercel.app/api/crop` in `config.js`.
+2. **Keys on the phone.** Open Settings in the app and paste the keys. They are stored only on that device.
 
 ## Run locally
 
