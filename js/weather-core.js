@@ -1,0 +1,276 @@
+// Weather hazard rules shared by the app and the service worker.
+// Loaded as a classic script (window / self global), so the service worker
+// can use it with importScripts().
+(function (root) {
+  "use strict";
+
+  // Days before an event on which an alert is raised.
+  const MILESTONES = [7, 5, 3, 2, 1];
+
+  // Thresholds follow India Meteorological Department (IMD) terms where they exist.
+  const RULES = [
+    {
+      id: "rain_extreme", group: "rain", severe: true,
+      test: (d) => d.rain >= 204.5,
+      title: "Extremely heavy rain",
+      detail: (d) => `${d.rain.toFixed(0)} mm of rain expected`,
+      advice: [
+        "Open drains and field channels now so water can flow out.",
+        "Move potted plants and seedlings to a raised, sheltered spot.",
+        "Stake tall plants and harvest anything ripe before the rain.",
+        "Do not apply any fertiliser or spray before heavy rain; it will wash off."
+      ]
+    },
+    {
+      id: "rain_very_heavy", group: "rain", severe: true,
+      test: (d) => d.rain >= 115.6 && d.rain < 204.5,
+      title: "Very heavy rain",
+      detail: (d) => `${d.rain.toFixed(0)} mm of rain expected`,
+      advice: [
+        "Clear drains and make sure pots have drainage holes.",
+        "Stake or tie up tall and fruiting plants.",
+        "Harvest ripe fruit and vegetables early.",
+        "Hold off on fertiliser or sprays until the rain passes."
+      ]
+    },
+    {
+      id: "rain_heavy", group: "rain", severe: false,
+      test: (d) => d.rain >= 64.5 && d.rain < 115.6,
+      title: "Heavy rain",
+      detail: (d) => `${d.rain.toFixed(0)} mm of rain expected`,
+      advice: [
+        "Check that water will not stand around roots.",
+        "Skip watering on the days before.",
+        "Watch for fungal spots on leaves a few days after the rain."
+      ]
+    },
+    {
+      id: "heat_severe", group: "heat", severe: true,
+      test: (d) => d.tmax >= 45,
+      title: "Severe heatwave",
+      detail: (d) => `Up to ${d.tmax.toFixed(0)}°C`,
+      advice: [
+        "Water deeply early in the morning or late evening, not at midday.",
+        "Put up shade net or cloth over young plants and nurseries.",
+        "Mulch the soil with dry leaves or straw to keep roots cool.",
+        "Move pots off hot concrete and away from west-facing walls."
+      ]
+    },
+    {
+      id: "heat", group: "heat", severe: false,
+      test: (d) => d.tmax >= 40 && d.tmax < 45,
+      title: "Heatwave conditions",
+      detail: (d) => `Up to ${d.tmax.toFixed(0)}°C`,
+      advice: [
+        "Water early morning; check soil moisture again in the evening.",
+        "Mulch around plants to hold moisture.",
+        "Give seedlings and potted plants afternoon shade."
+      ]
+    },
+    {
+      id: "frost", group: "cold", severe: true,
+      test: (d) => d.tmin <= 2,
+      title: "Frost risk",
+      detail: (d) => `Down to ${d.tmin.toFixed(0)}°C`,
+      advice: [
+        "Cover sensitive plants overnight with cloth or straw (not plastic touching leaves).",
+        "Water the soil lightly in the evening; moist soil holds heat better.",
+        "Bring potted plants indoors or next to a wall."
+      ]
+    },
+    {
+      id: "cold", group: "cold", severe: false,
+      test: (d) => d.tmin > 2 && d.tmin <= 6,
+      title: "Cold night",
+      detail: (d) => `Down to ${d.tmin.toFixed(0)}°C`,
+      advice: [
+        "Protect tropical plants (e.g. papaya, banana seedlings, tulsi) at night.",
+        "Avoid evening watering of leaves."
+      ]
+    },
+    {
+      id: "hail", group: "storm", severe: true,
+      test: (d) => d.code === 96 || d.code === 99,
+      title: "Thunderstorm with hail",
+      detail: () => "Hail is possible",
+      advice: [
+        "Cover nurseries and vegetable beds with net or old sacks.",
+        "Move pots under a roof.",
+        "Harvest ready fruit and vegetables beforehand."
+      ]
+    },
+    {
+      id: "thunder", group: "storm", severe: false,
+      test: (d) => d.code === 95,
+      title: "Thunderstorm",
+      detail: () => "Thunderstorms expected",
+      advice: [
+        "Stake tall plants and climbers.",
+        "Stay indoors during lightning; don't work in open fields."
+      ]
+    },
+    {
+      id: "wind_severe", group: "wind", severe: true,
+      test: (d) => d.gust >= 90,
+      title: "Damaging winds",
+      detail: (d) => `Gusts up to ${d.gust.toFixed(0)} km/h`,
+      advice: [
+        "Tie banana, papaya and young trees to strong stakes.",
+        "Move hanging baskets and pots to the ground in a sheltered spot.",
+        "Secure shade nets and poly-house covers."
+      ]
+    },
+    {
+      id: "wind", group: "wind", severe: false,
+      test: (d) => d.gust >= 60 && d.gust < 90,
+      title: "Strong winds",
+      detail: (d) => `Gusts up to ${d.gust.toFixed(0)} km/h`,
+      advice: [
+        "Stake tall plants and climbers.",
+        "Move light pots to a sheltered spot."
+      ]
+    }
+  ];
+
+  const WX = {
+    0: ["☀️", "Clear"], 1: ["🌤️", "Mostly clear"], 2: ["⛅", "Partly cloudy"], 3: ["☁️", "Cloudy"],
+    45: ["🌫️", "Fog"], 48: ["🌫️", "Fog"],
+    51: ["🌦️", "Drizzle"], 53: ["🌦️", "Drizzle"], 55: ["🌦️", "Drizzle"],
+    61: ["🌧️", "Light rain"], 63: ["🌧️", "Rain"], 65: ["🌧️", "Heavy rain"],
+    66: ["🌧️", "Freezing rain"], 67: ["🌧️", "Freezing rain"],
+    71: ["🌨️", "Snow"], 73: ["🌨️", "Snow"], 75: ["🌨️", "Snow"], 77: ["🌨️", "Snow"],
+    80: ["🌦️", "Showers"], 81: ["🌧️", "Showers"], 82: ["⛈️", "Heavy showers"],
+    85: ["🌨️", "Snow showers"], 86: ["🌨️", "Snow showers"],
+    95: ["⛈️", "Thunderstorm"], 96: ["⛈️", "Storm with hail"], 99: ["⛈️", "Storm with hail"]
+  };
+
+  function forecastUrl(lat, lon) {
+    const p = new URLSearchParams({
+      latitude: lat.toFixed(4),
+      longitude: lon.toFixed(4),
+      daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_gusts_10m_max",
+      timezone: "auto",
+      forecast_days: "16"
+    });
+    return "https://api.open-meteo.com/v1/forecast?" + p.toString();
+  }
+
+  async function fetchForecast(lat, lon) {
+    const res = await fetch(forecastUrl(lat, lon));
+    if (!res.ok) throw new Error("Weather service error " + res.status);
+    const j = await res.json();
+    const d = j.daily;
+    const days = d.time.map((date, i) => ({
+      date,
+      code: d.weather_code[i],
+      tmax: d.temperature_2m_max[i] ?? NaN,
+      tmin: d.temperature_2m_min[i] ?? NaN,
+      rain: d.precipitation_sum[i] ?? 0,
+      rainChance: d.precipitation_probability_max?.[i] ?? null,
+      gust: d.wind_gusts_10m_max[i] ?? 0
+    }));
+    return { fetchedAt: new Date().toISOString(), timezone: j.timezone, days };
+  }
+
+  // Today's date in the place's own timezone, as YYYY-MM-DD.
+  function todayIn(timezone) {
+    try {
+      return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }
+
+  function daysBetween(a, b) {
+    return Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 864e5);
+  }
+
+  // Strongest hazard per group per day.
+  function hazardsForDay(day) {
+    const found = {};
+    for (const rule of RULES) {
+      if ([day.tmax, day.tmin, day.rain, day.gust].some((v) => typeof v !== "number")) continue;
+      if (!found[rule.group] && rule.test(day)) found[rule.group] = rule;
+    }
+    return Object.values(found);
+  }
+
+  // Dry spell: 7+ days in a row without meaningful rain, mostly hot.
+  function dryspell(days, today) {
+    const upcoming = days.filter((d) => daysBetween(today, d.date) >= 0);
+    let run = 0, start = null;
+    for (const d of upcoming) {
+      if (d.rain < 1 && d.tmax >= 35) { run++; if (run === 1) start = d.date; if (run >= 7) return { start, length: run }; }
+      else { run = 0; start = null; }
+    }
+    return null;
+  }
+
+  // All hazards in the forecast with days-ahead info.
+  function analyse(forecast) {
+    const today = todayIn(forecast.timezone);
+    const events = [];
+    for (const day of forecast.days) {
+      const ahead = daysBetween(today, day.date);
+      if (ahead < 0) continue;
+      for (const rule of hazardsForDay(day)) {
+        events.push({
+          key: `${rule.id}|${day.date}`,
+          rule: rule.id, group: rule.group, severe: rule.severe,
+          title: rule.title, detail: rule.detail(day), advice: rule.advice,
+          date: day.date, daysAhead: ahead,
+          milestone: MILESTONES.includes(ahead) ? ahead : null,
+          lowConfidence: ahead > 7
+        });
+      }
+    }
+    const dry = dryspell(forecast.days, today);
+    if (dry) {
+      const ahead = daysBetween(today, dry.start);
+      events.push({
+        key: `dry|${dry.start}`, rule: "dry", group: "dry", severe: false,
+        title: "Long hot dry spell",
+        detail: `${dry.length}+ hot days in a row with no rain`,
+        advice: [
+          "Plan watering: deep watering every few days is better than a little daily.",
+          "Mulch beds and pots to cut evaporation.",
+          "Collect and store water where you can."
+        ],
+        date: dry.start, daysAhead: ahead,
+        milestone: MILESTONES.includes(ahead) ? ahead : null,
+        lowConfidence: ahead > 7
+      });
+    }
+    events.sort((a, b) => a.daysAhead - b.daysAhead || Number(b.severe) - Number(a.severe));
+    return events;
+  }
+
+  function whenText(daysAhead) {
+    if (daysAhead === 0) return "Today";
+    if (daysAhead === 1) return "Tomorrow";
+    return `In ${daysAhead} days`;
+  }
+
+  // Alerts that should go out as notifications right now.
+  function dueNotifications(places, forecasts, notified) {
+    const out = [];
+    for (const place of places) {
+      const f = forecasts[place.id];
+      if (!f) continue;
+      for (const e of analyse(f)) {
+        if (e.milestone == null && e.daysAhead !== 0) continue;
+        const key = `${place.id}|${e.key}|${e.daysAhead}`;
+        if (notified[key]) continue;
+        out.push({
+          key,
+          title: `${e.title}: ${whenText(e.daysAhead).toLowerCase()} at ${place.name}`,
+          body: `${e.detail} on ${e.date}. ${e.advice[0]}`,
+          severe: e.severe
+        });
+      }
+    }
+    return out;
+  }
+
+  root.PaudhaWeather = { MILESTONES, RULES, WX, fetchForecast, analyse, todayIn, daysBetween, whenText, dueNotifications };
+})(typeof self !== "undefined" ? self : window);

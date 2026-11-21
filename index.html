@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Paudha – Indian Plant Doctor</title>
+  <meta name="description" content="Identify Indian plants, check plant health and get weather warnings for your garden or farm.">
+  <meta name="theme-color" content="#1f7a3f">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <img src="icons/icon.svg" alt="" class="logo">
+    <div>
+      <h1>Paudha</h1>
+      <p class="tagline">Indian plant doctor</p>
+    </div>
+  </header>
+
+  <main id="app">
+    <!-- SCAN -->
+    <section id="view-scan" class="view active" aria-labelledby="scan-h">
+      <h2 id="scan-h">Check a plant</h2>
+      <p class="muted">Add clear photos of the parts you are worried about. More parts (leaf + whole plant) gives a more reliable answer.</p>
+
+      <div class="card">
+        <label class="field-label">Which part is in the photo?</label>
+        <div class="chips" id="part-chips" role="radiogroup">
+          <button type="button" class="chip selected" data-part="leaf">Leaf</button>
+          <button type="button" class="chip" data-part="stem">Stem</button>
+          <button type="button" class="chip" data-part="root">Root</button>
+          <button type="button" class="chip" data-part="whole">Whole plant</button>
+          <button type="button" class="chip" data-part="flower">Flower / fruit</button>
+        </div>
+
+        <div class="photo-actions">
+          <label class="btn primary">
+            <input type="file" accept="image/*" capture="environment" id="camera-input" hidden>
+            📷 Take photo
+          </label>
+          <label class="btn">
+            <input type="file" accept="image/*" id="gallery-input" multiple hidden>
+            🖼️ From gallery
+          </label>
+        </div>
+
+        <ul id="photo-list" class="photo-list" aria-live="polite"></ul>
+        <p class="hint" id="photo-count">Up to 5 photos. Each photo is checked for blur and light before it is sent.</p>
+
+        <label class="field-label" for="scan-place">Where is this plant? (optional)</label>
+        <select id="scan-place"><option value="">Not linked to a place</option></select>
+
+        <button type="button" class="btn primary block" id="analyse-btn" disabled>Analyse plant</button>
+      </div>
+
+      <details class="card tips">
+        <summary>📸 How to take a good photo</summary>
+        <ul>
+          <li>Use daylight. Avoid flash, deep shade and strong backlight.</li>
+          <li>Hold the phone steady and tap the screen to focus on the leaf or spot.</li>
+          <li>Fill most of the frame with the plant part. One leaf per photo works best.</li>
+          <li>For disease, show both the top and underside of an affected leaf, plus one healthy-looking leaf if possible.</li>
+          <li>For identification, add a photo of the whole plant and a close-up of a leaf (and flower or fruit if present).</li>
+          <li>For roots, wash off the soil gently before taking the photo.</li>
+          <li>Use a plain background (a sheet of paper or your palm) if leaves are against a busy background.</li>
+        </ul>
+      </details>
+
+      <div id="result" class="result" aria-live="polite"></div>
+    </section>
+
+    <!-- PLACES & WEATHER -->
+    <section id="view-places" class="view" aria-labelledby="places-h">
+      <h2 id="places-h">My plant places</h2>
+      <p class="muted">Save where your plants grow. You will get weather warnings 7, 5, 3, 2 and 1 day before heavy rain, heatwaves, cold, storms, hail or strong wind.</p>
+
+      <div id="alert-summary"></div>
+
+      <div class="card">
+        <label class="field-label" for="place-search">Add a place</label>
+        <div class="row">
+          <input id="place-search" type="search" placeholder="Village, town or city" autocomplete="off">
+          <button type="button" class="btn" id="place-search-btn">Search</button>
+        </div>
+        <ul id="place-results" class="search-results"></ul>
+        <button type="button" class="btn block" id="use-location">📍 Use my current location</button>
+      </div>
+
+      <div class="row space">
+        <button type="button" class="btn small" id="refresh-weather">↻ Refresh forecasts</button>
+        <button type="button" class="btn small" id="enable-notify">🔔 Turn on alerts</button>
+      </div>
+
+      <div id="places-list"></div>
+    </section>
+
+    <!-- HISTORY -->
+    <section id="view-history" class="view" aria-labelledby="history-h">
+      <h2 id="history-h">Scan history</h2>
+      <p class="muted">Saved only on this phone.</p>
+      <div id="history-list"></div>
+    </section>
+
+    <!-- GUIDE -->
+    <section id="view-guide" class="view" aria-labelledby="guide-h">
+      <h2 id="guide-h">Guide &amp; help</h2>
+      <div id="guide-content"></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="view-settings" class="view" aria-labelledby="settings-h">
+      <h2 id="settings-h">Settings</h2>
+
+      <div class="card">
+        <h3>Identification service</h3>
+        <p class="muted" id="service-status"></p>
+        <label class="field-label" for="api-key">Plant.id API key (only needed if the app shows "service not set up")</label>
+        <input id="api-key" type="password" autocomplete="off" placeholder="Paste your key">
+        <p class="hint">Get a key at <a href="https://admin.kindwise.com/signup" target="_blank" rel="noopener">admin.kindwise.com</a>. The key stays on this phone.</p>
+        <button type="button" class="btn" id="save-key">Save key</button>
+      </div>
+
+      <div class="card">
+        <h3>Plant name language</h3>
+        <select id="name-lang">
+          <option value="en">English</option>
+          <option value="hi">हिन्दी (Hindi)</option>
+          <option value="bn">বাংলা (Bengali)</option>
+          <option value="mr">मराठी (Marathi)</option>
+          <option value="ta">தமிழ் (Tamil)</option>
+          <option value="te">తెలుగు (Telugu)</option>
+          <option value="kn">ಕನ್ನಡ (Kannada)</option>
+          <option value="ml">മലയാളം (Malayalam)</option>
+          <option value="gu">ગુજરાતી (Gujarati)</option>
+          <option value="pa">ਪੰਜਾਬੀ (Punjabi)</option>
+        </select>
+        <p class="hint">Common names are shown in this language when available.</p>
+      </div>
+
+      <div class="card">
+        <h3>How sure the app must be</h3>
+        <p>Paudha does not guess. It only names a plant, disease or deficiency when the analysis is at least:</p>
+        <ul id="threshold-list"></ul>
+        <p class="hint">Below these levels it says "not sure" and asks for better photos or an expert.</p>
+      </div>
+
+      <div class="card">
+        <h3>Your data</h3>
+        <button type="button" class="btn" id="export-data">Export my data</button>
+        <button type="button" class="btn danger" id="clear-history">Clear scan history</button>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="Main">
+    <button class="tab active" data-view="scan"><span>🔍</span>Scan</button>
+    <button class="tab" data-view="places"><span>🌦️</span>Places<b id="alert-badge" class="badge" hidden></b></button>
+    <button class="tab" data-view="history"><span>🗂️</span>History</button>
+    <button class="tab" data-view="guide"><span>📘</span>Guide</button>
+    <button class="tab" data-view="settings"><span>⚙️</span>Settings</button>
+  </nav>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="config.js"></script>
+  <script src="js/weather-core.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
