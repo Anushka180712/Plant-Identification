@@ -15,7 +15,7 @@ const ALL_LANGS = [
   { code: "pa", name: "ਪੰਜਾਬੀ", en: "Punjabi" }
 ];
 // Languages whose translation file is ready.
-const READY = ["en", "hi", "bn", "mr", "gu", "pa", "or", "ta"];
+const READY = ["en", "hi", "bn", "mr", "gu", "pa", "or", "ta", "te", "kn", "ml"];
 export const LANGS = ALL_LANGS.filter((l) => READY.includes(l.code));
 
 let current = "en";
