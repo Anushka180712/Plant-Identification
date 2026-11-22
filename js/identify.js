@@ -162,18 +162,17 @@ export function corroborate(out, op) {
   if (!op || out.verdict !== "plant") return out;
   out.sources = [...out.sources, "Gemini"];
 
-  if (out.plant.status !== "sure" && op.plantScientific && op.plantConfidence >= GEMINI_MIN) {
+  if (out.plant.status !== "sure" && (op.plantScientific || op.plantCommon) && op.plantConfidence >= GEMINI_MIN) {
     const g = genusOf(op.plantScientific).toLowerCase();
-    const match = out.plantCandidates.find((c, i) => i === 0 && c.probability >= AGREE_MIN / 2 && genusOf(c.name).toLowerCase() === g)
-      || out.plantCandidates.find((c) => c.probability >= AGREE_MIN && genusOf(c.name).toLowerCase() === g);
-    if (match) out.plant = confirmedPlant(match, { name: op.plantScientific }, [match.source, "Gemini"]);
+    const common = norm(op.plantCommon);
+    const match = findAgreeing(out.plantCandidates, op.plantConfidence, (c) =>
+      (g && genusOf(c.name).toLowerCase() === g) || (common && norm(c.common) === common));
+    if (match) out.plant = confirmedPlant(match, { name: op.plantScientific || match.name }, [match.source, "Gemini"]);
   }
 
   if (!out.diseases.length && op.problemConfidence >= GEMINI_MIN && /disease|pest|deficiency/.test(op.problemType)) {
     const ai = { name: op.problemCommon, scientific: op.problemScientific };
-    const top = out.diseaseCandidates[0];
-    const match = top && top.probability >= AGREE_MIN / 2 && sameProblem(top, ai) ? top
-      : out.diseaseCandidates.find((c) => c.probability >= AGREE_MIN && sameProblem(c, ai));
+    const match = findAgreeing(out.diseaseCandidates, op.problemConfidence, (c) => sameProblem(c, ai));
     if (match) {
       out.diseases.push(confirmedDisease(match, [match.source, "Gemini"]));
       out.diseaseCandidates = out.diseaseCandidates.filter((c) => c !== match);
@@ -185,6 +184,15 @@ export function corroborate(out, op) {
     out.health = { status: "healthy", probability: out.healthyProbability, confirmedBy: ["Kindwise", "Gemini"] };
   }
   return out;
+}
+
+// The more sure the AI is, the lower a Kindwise candidate may score and still
+// count as agreement. Only the top three candidates are considered, and the
+// first-ranked one gets a little extra room.
+function findAgreeing(candidates, aiConfidence, same) {
+  const floor = aiConfidence >= 0.9 ? 0.15 : aiConfidence >= 0.8 ? 0.2 : AGREE_MIN;
+  const top3 = [...candidates].sort((a, b) => b.probability - a.probability).slice(0, 3);
+  return top3.find((c, i) => c.probability >= (i === 0 ? Math.min(floor, 0.125) : floor) && same(c));
 }
 
 /* ---------- matching answers from different checks ---------- */

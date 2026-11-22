@@ -5,7 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Paudha – Indian Plant Doctor</title>
   <meta name="description" content="Identify Indian plants, check plant health and get weather warnings for your garden or farm.">
-  <meta name="theme-color" content="#1f7a3f">
+  <meta name="theme-color" content="#0b1a10">
+  <script>
+    // Theme before first paint: saved choice, otherwise dark.
+    (function () {
+      var t = "dark";
+      try { t = localStorage.getItem("paudha.theme") || "dark"; } catch (e) {}
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -18,40 +29,37 @@
       <h1>Paudha</h1>
       <p class="tagline" data-i18n="app.tagline">Indian plant doctor</p>
     </div>
-    <label class="lang-top"><span class="sr" data-i18n="lang.pick">Choose your language</span>
-      <select id="top-lang" aria-label="Language"></select></label>
+    <div class="top-actions">
+      <label class="lang-top"><span class="sr" data-i18n="lang.pick">Choose your language</span>
+        <i data-icon="globe"></i><select id="top-lang" aria-label="Language"></select></label>
+      <button type="button" class="icon-btn theme-btn" id="theme-btn" aria-label="Light / dark theme"><i data-icon="sun" class="sun"></i><i data-icon="moon" class="moon"></i></button>
+    </div>
   </header>
 
   <main id="app">
     <!-- SCAN -->
     <section id="view-scan" class="view active" aria-labelledby="scan-h">
       <h2 id="scan-h" data-i18n="scan.title">Check a plant</h2>
-      <p class="muted" data-i18n="scan.intro"></p>
 
-      <div class="card">
-        <label class="field-label" data-i18n="scan.partQ">Which part is in the photo?</label>
-        <div class="chips" id="part-chips" role="radiogroup">
-          <button type="button" class="chip selected" data-part="leaf" data-i18n="part.leaf">Leaf</button>
-          <button type="button" class="chip" data-part="stem" data-i18n="part.stem">Stem</button>
-          <button type="button" class="chip" data-part="root" data-i18n="part.root">Root</button>
-          <button type="button" class="chip" data-part="whole" data-i18n="part.whole">Whole plant</button>
-          <button type="button" class="chip" data-part="flower" data-i18n="part.flower">Flower / fruit</button>
+      <ol class="how-steps">
+        <li><span class="step-ico"><i data-icon="camera"></i></span><span data-i18n="how.1">Take photos</span></li>
+        <li><span class="step-ico"><i data-icon="scan"></i></span><span data-i18n="how.2">Get a sure diagnosis</span></li>
+        <li><span class="step-ico"><i data-icon="sprout"></i></span><span data-i18n="how.3">Follow safe first steps</span></li>
+      </ol>
+      <div class="card scan-card">
+        <input type="file" accept="image/*" capture="environment" id="camera-input" hidden>
+        <input type="file" accept="image/*" id="gallery-input" multiple hidden>
+        <div class="dropzone" id="dropzone">
+          <div class="dz-icon"><i data-icon="scan"></i></div>
+          <p class="dz-title" data-i18n="scan.addTitle">Add photos of your plant</p>
+          <p class="hint" data-i18n="scan.addHint"></p>
+          <div class="photo-actions">
+            <button type="button" class="btn primary" id="camera-btn"><i data-icon="camera"></i><span data-i18n="scan.takePhoto">Take photo</span></button>
+            <button type="button" class="btn" id="gallery-btn"><i data-icon="image"></i><span data-i18n="scan.gallery">From gallery</span></button>
+          </div>
         </div>
-
-        <div class="photo-actions">
-          <label class="btn primary">
-            <input type="file" accept="image/*" capture="environment" id="camera-input" hidden>
-            📷 <span data-i18n="scan.takePhoto">Take photo</span>
-          </label>
-          <label class="btn">
-            <input type="file" accept="image/*" id="gallery-input" multiple hidden>
-            🖼️ <span data-i18n="scan.gallery">From gallery</span>
-          </label>
-        </div>
-
-        <button type="button" class="btn wide" id="burst-open">📸 <span data-i18n="scan.burst">Quick camera</span></button>
-        <p class="hint" data-i18n="scan.burstHint"></p>
-        <ul id="photo-list" class="photo-list" aria-live="polite"></ul>
+        <ul id="photo-list" class="photo-grid" aria-live="polite"></ul>
+        <ul id="photo-issues" class="photo-issues"></ul>
         <p class="hint" id="photo-count"></p>
 
         <label class="field-label" for="scan-place" data-i18n="scan.placeQ">Where is this plant? (optional)</label>
@@ -61,7 +69,7 @@
       </div>
 
       <details class="card tips">
-        <summary>📸 <span data-i18n="scan.tipsTitle">How to take a good photo</span></summary>
+        <summary><i data-icon="bulb"></i><span data-i18n="scan.tipsTitle">How to take a good photo</span></summary>
         <ul id="tips-list"></ul>
       </details>
 
@@ -82,11 +90,11 @@
           <button type="button" class="btn" id="place-search-btn" data-i18n="places.search">Search</button>
         </div>
         <ul id="place-results" class="search-results"></ul>
-        <button type="button" class="btn block" id="use-location">📍 <span data-i18n="places.useLocation">Use my current location</span></button>
+        <button type="button" class="btn block" id="use-location"><i data-icon="pin"></i><span data-i18n="places.useLocation">Use my current location</span></button>
       </div>
 
       <div class="row space">
-        <button type="button" class="btn small" id="refresh-weather">↻ <span data-i18n="places.refresh">Refresh forecasts</span></button>
+        <button type="button" class="btn small" id="refresh-weather"><i data-icon="refresh"></i><span data-i18n="places.refresh">Refresh forecasts</span></button>
         <button type="button" class="btn small" id="enable-notify">🔔 Turn on alerts</button>
       </div>
 
@@ -148,11 +156,11 @@
   </main>
 
   <nav class="tabbar" aria-label="Main">
-    <button class="tab active" data-view="scan"><span class="ico">🔍</span><span data-i18n="tab.scan">Scan</span></button>
-    <button class="tab" data-view="places"><span class="ico">🌦️</span><span data-i18n="tab.places">Places</span><b id="alert-badge" class="badge" hidden></b></button>
-    <button class="tab" data-view="history"><span class="ico">🗂️</span><span data-i18n="tab.history">History</span></button>
-    <button class="tab" data-view="guide"><span class="ico">📘</span><span data-i18n="tab.guide">Guide</span></button>
-    <button class="tab" data-view="settings"><span class="ico">⚙️</span><span data-i18n="tab.settings">Settings</span></button>
+    <button class="tab" data-view="places"><i data-icon="cloud" class="ico"></i><span data-i18n="tab.places">Places</span><b id="alert-badge" class="badge" hidden></b></button>
+    <button class="tab" data-view="history"><i data-icon="history" class="ico"></i><span data-i18n="tab.history">History</span></button>
+    <button class="tab tab-main active" data-view="scan"><span class="fab"><i data-icon="camera" class="ico"></i></span><span data-i18n="tab.scan">Scan</span></button>
+    <button class="tab" data-view="guide"><i data-icon="book" class="ico"></i><span data-i18n="tab.guide">Guide</span></button>
+    <button class="tab" data-view="settings"><i data-icon="settings" class="ico"></i><span data-i18n="tab.settings">Settings</span></button>
   </nav>
 
   <div id="toast" class="toast" role="status" hidden></div>
@@ -161,14 +169,5 @@
   <script src="js/lang/en.js"></script>
   <script src="js/weather-core.js"></script>
   <script type="module" src="js/app.js"></script>
-  <div id="burst" class="burst" hidden>
-    <video id="burst-video" playsinline muted autoplay></video>
-    <div class="burst-top"><div class="chips" id="burst-parts"></div></div>
-    <div class="burst-bottom">
-      <div id="burst-thumbs" class="burst-thumbs"></div>
-      <button type="button" id="burst-shoot" class="shutter" aria-label="Take photo"></button>
-      <button type="button" id="burst-done" class="btn primary">Done</button>
-    </div>
-  </div>
 </body>
 </html>

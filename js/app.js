@@ -2,17 +2,16 @@ import { loadImage, analyseQuality, toJpeg, trimBorders } from "./quality.js";
 import { identify, serviceMode, THRESHOLDS, ServiceNotConfigured, ApiError } from "./identify.js";
 import * as store from "./storage.js";
 import { HELP, NUTRIENTS, PHOTO_TIP_KEYS, matchNutrient } from "./guide.js";
+import { icon, hydrateIcons } from "./icons.js";
 import { t, setLang, getLang, hasChosenLang, LANGS, locale } from "./i18n.js";
 
 const W = window.PaudhaWeather;
-const MAX_PHOTOS = 8;
-const PARTS = ["leaf", "stem", "root", "whole", "flower"];
+const MAX_PHOTOS = 10;
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const pct = (p) => `${Math.round(p * 100)}%`;
-const partLabel = (p) => t(`part.${p}`);
 const fmtDate = (iso, opts) => new Date(iso + (iso.length === 10 ? "T00:00:00" : "")).toLocaleDateString(locale(), opts);
 const fmtDateTime = (iso) => new Date(iso).toLocaleString(locale());
 
@@ -36,21 +35,18 @@ function showView(name) {
   window.scrollTo({ top: 0 });
   history.replaceState(null, "", `#${name}`);
 }
-$$(".tab").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
+$$(".tab").forEach((b) => b.addEventListener("click", () => {
+  // The big centre button opens the camera straight away when already on Scan.
+  if (b.dataset.view === "scan" && currentView === "scan") { $("#camera-input").click(); return; }
+  showView(b.dataset.view);
+}));
 
 /* ---------------- Scan ---------------- */
-let selectedPart = "leaf";
 let photos = [];
 let lastResult = null;
+let lastThumbs = [];
 
-$$("#part-chips .chip").forEach((c) =>
-  c.addEventListener("click", () => {
-    selectedPart = c.dataset.part;
-    $$("#part-chips .chip").forEach((x) => x.classList.toggle("selected", x === c));
-  })
-);
-
-async function addFiles(files, part = selectedPart) {
+async function addFiles(files) {
   for (const file of files) {
     if (photos.length >= MAX_PHOTOS) {
       toast(t("scan.maxPhotos", { max: MAX_PHOTOS }));
@@ -66,11 +62,10 @@ async function addFiles(files, part = selectedPart) {
       const quality = analyseQuality(img);
       photos.push({
         id: store.uid(),
-        part,
         url,
         quality,
         upload: quality.ok ? toJpeg(img, 1500, 0.85) : null,
-        thumb: toJpeg(img, 160, 0.7)
+        thumb: toJpeg(img, 240, 0.75)
       });
     } catch {
       toast(t("scan.cantOpen"));
@@ -81,94 +76,35 @@ async function addFiles(files, part = selectedPart) {
 
 $("#camera-input").addEventListener("change", (e) => { addFiles([...e.target.files]); e.target.value = ""; });
 $("#gallery-input").addEventListener("change", (e) => { addFiles([...e.target.files]); e.target.value = ""; });
-
-/* Quick camera: snap several photos in a row without leaving the app. */
-let burstStream = null;
-let burstPart = "leaf";
-function renderBurstParts() {
-  $("#burst-parts").innerHTML = PARTS.map((x) => `<button type="button" class="chip${x === burstPart ? " selected" : ""}" data-bpart="${x}">${esc(partLabel(x))}</button>`).join("");
-  $$("[data-bpart]").forEach((b) => b.addEventListener("click", () => { burstPart = b.dataset.bpart; renderBurstParts(); }));
-}
-function renderBurstCount() {
-  $("#burst-done").textContent = t("scan.done", { n: photos.length });
-  $("#burst-thumbs").innerHTML = photos.slice(-4).map((p) => `<img src="${p.url}" alt="" class="${p.quality.ok ? "" : "bad"}">`).join("");
-}
-async function openBurst() {
-  if (!navigator.mediaDevices?.getUserMedia) { $("#camera-input").click(); return; }
-  try {
-    burstStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false
-    });
-  } catch {
-    toast(t("scan.cameraFail"));
-    $("#camera-input").click();
-    return;
-  }
-  const track = burstStream.getVideoTracks()[0];
-  try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch { /* not supported */ }
-  burstPart = selectedPart;
-  $("#burst-video").srcObject = burstStream;
-  $("#burst").hidden = false;
-  document.body.classList.add("no-scroll");
-  renderBurstParts();
-  renderBurstCount();
-}
-function closeBurst() {
-  if (burstStream) for (const tr of burstStream.getTracks()) tr.stop();
-  burstStream = null;
-  $("#burst-video").srcObject = null;
-  $("#burst").hidden = true;
-  document.body.classList.remove("no-scroll");
-}
-async function burstShoot() {
-  const v = $("#burst-video");
-  if (!v.videoWidth) return;
-  if (photos.length >= MAX_PHOTOS) { toast(t("scan.maxPhotos", { max: MAX_PHOTOS })); return; }
-  const c = document.createElement("canvas");
-  c.width = v.videoWidth;
-  c.height = v.videoHeight;
-  c.getContext("2d").drawImage(v, 0, 0);
-  $("#burst").classList.add("flash");
-  setTimeout(() => $("#burst").classList.remove("flash"), 150);
-  const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.92));
-  if (!blob) return;
-  await addFiles([new File([blob], `photo-${Date.now()}.jpg`, { type: "image/jpeg" })], burstPart);
-  const last = photos[photos.length - 1];
-  if (last && !last.quality.ok) toast(t(`q.${last.quality.problems[0].code}`));
-  renderBurstCount();
-}
-$("#burst-open").addEventListener("click", openBurst);
-$("#burst-shoot").addEventListener("click", burstShoot);
-$("#burst-done").addEventListener("click", closeBurst);
+$("#camera-btn").addEventListener("click", () => $("#camera-input").click());
+$("#gallery-btn").addEventListener("click", () => $("#gallery-input").click());
 
 function renderPhotos() {
   const list = $("#photo-list");
-  list.innerHTML = photos.map((p) => `
-    <li class="photo-item ${p.quality.ok ? "" : "bad"}">
-      <img src="${p.url}" alt="${esc(partLabel(p.part))}">
-      <div class="meta">
-        <select class="part-select" data-part-of="${p.id}" aria-label="${esc(t("scan.partQ"))}">${PARTS.map((x) => `<option value="${x}"${x === p.part ? " selected" : ""}>${esc(partLabel(x))}</option>`).join("")}</select>
-        ${p.quality.ok ? `✅ ${esc(t("scan.clear"))}` : p.quality.problems.map((x) => `⚠️ ${esc(t(`q.${x.code}`))}`).join("<br>")}
-      </div>
-      <button class="icon-btn" data-remove="${p.id}" aria-label="${esc(t("scan.remove"))}">✕</button>
-    </li>`).join("");
-  $$("[data-part-of]", list).forEach((sel) => sel.addEventListener("change", () => {
-    const p = photos.find((x) => x.id === sel.dataset.partOf);
-    if (p) p.part = sel.value;
-  }));
+  list.innerHTML = photos.map((p, i) => `
+    <li class="photo-tile ${p.quality.ok ? "ok" : "bad"}">
+      <img src="${p.url}" alt="${esc(t("scan.photoN", { n: i + 1 }))}">
+      <span class="tile-status" title="${esc(p.quality.ok ? t("scan.clear") : t(`q.${p.quality.problems[0].code}`))}">${icon(p.quality.ok ? "check" : "alert")}</span>
+      <button class="tile-remove" data-remove="${p.id}" aria-label="${esc(t("scan.remove"))}">${icon("x")}</button>
+    </li>`).join("") + (photos.length && photos.length < MAX_PHOTOS ? `
+    <li class="photo-tile add"><button type="button" id="add-more" aria-label="${esc(t("scan.addMore"))}">${icon("plus")}<span>${esc(t("scan.addMore"))}</span></button></li>` : "");
   $$("[data-remove]", list).forEach((b) => b.addEventListener("click", () => {
     const p = photos.find((x) => x.id === b.dataset.remove);
     if (p) URL.revokeObjectURL(p.url);
     photos = photos.filter((x) => x.id !== b.dataset.remove);
     renderPhotos();
   }));
+  $("#add-more", list)?.addEventListener("click", () => $("#camera-input").click());
 
-  const good = photos.filter((p) => p.quality.ok).length;
-  const bad = photos.length - good;
+  const problems = photos.filter((p) => !p.quality.ok);
+  $("#photo-issues").innerHTML = problems.map((p) => `<li>${icon("alert")}<span><strong>${esc(t("scan.photoN", { n: photos.indexOf(p) + 1 }))}:</strong> ${p.quality.problems.map((x) => esc(t(`q.${x.code}`))).join(" ")}</span></li>`).join("");
+
+  const good = photos.length - problems.length;
+  $("#dropzone").classList.toggle("compact", photos.length > 0);
   $("#analyse-btn").disabled = good === 0;
   $("#photo-count").textContent = photos.length === 0
     ? t("scan.countEmpty", { max: MAX_PHOTOS })
-    : t("scan.countReady", { good }) + (bad ? " " + t("scan.countSkipped", { bad }) : "");
+    : t("scan.countReady", { good }) + (problems.length ? " " + t("scan.countSkipped", { bad: problems.length }) : "");
 }
 
 function renderTips() {
@@ -196,11 +132,12 @@ $("#analyse-btn").addEventListener("click", async () => {
   try {
     const res = await identify(good.map((p) => p.upload), place ? { lat: place.lat, lon: place.lon } : null);
     lastResult = res;
-    renderResult(res, result);
+    lastThumbs = good.map((p) => p.thumb);
+    renderResult(res, result, { thumbs: lastThumbs });
     if (res.verdict === "plant") {
       store.addHistory({
         thumb: good[0].thumb,
-        parts: good.map((p) => p.part),
+        count: good.length,
         placeId: place?.id || "",
         placeName: place?.name || "",
         result: res
@@ -211,7 +148,7 @@ $("#analyse-btn").addEventListener("click", async () => {
     if (e instanceof ServiceNotConfigured) {
       result.innerHTML = `<div class="banner warn"><h3>${esc(t("err.noService.title"))}</h3>
         <p>${esc(t("err.noService.body"))}</p>
-        <p><button class="btn small" data-goto="settings">⚙️ ${esc(t("tab.settings"))}</button></p></div>`;
+        <p><button class="btn small" data-goto="settings">${icon("settings")}${esc(t("tab.settings"))}</button></p></div>`;
       $("[data-goto]", result).addEventListener("click", () => showView("settings"));
     } else {
       const msg = !navigator.onLine ? t("err.offline") : e instanceof ApiError ? t(e.key, e.vars) : t("err.generic");
@@ -224,87 +161,100 @@ $("#analyse-btn").addEventListener("click", async () => {
 
 function expertBox(reasonKey) {
   return `<div class="expert">
-    <strong>👩‍🔬 ${esc(t("ex.title"))}</strong>
+    <div class="expert-head">${icon("expert")}<strong>${esc(t("ex.title"))}</strong></div>
     <p>${esc(t(reasonKey))}</p>
-    <p>📞 <a href="tel:${HELP.kccPhone}">${HELP.kccDisplay}</a>, ${esc(t("help.kcc"))}<br>
-    🏛️ <a href="${HELP.links[0].url}" target="_blank" rel="noopener">${esc(t(HELP.links[0].key))}</a></p>
+    <a class="contact" href="tel:${HELP.kccPhone}">${icon("phone")}<span><b>${HELP.kccDisplay}</b><small>${esc(t("help.kcc"))}</small></span></a>
+    <a class="contact" href="${HELP.links[0].url}" target="_blank" rel="noopener">${icon("building")}<span><b>${esc(t(HELP.links[0].key))}</b></span></a>
   </div>`;
 }
 
 function photoTipsHtml() {
-  return `<ul class="fix-list">${PHOTO_TIP_KEYS.map((k) => `<li>${esc(t(k))}</li>`).join("")}</ul>`;
+  return `<ul class="steps">${PHOTO_TIP_KEYS.map((k) => `<li>${esc(t(k))}</li>`).join("")}</ul>`;
 }
 
-const sureBadge = (p) => `<span class="confidence">${esc(t("r.sure", { p: pct(p) }))}</span>`;
+const sureBadge = (p) => `<span class="pill ok">${icon("checkCircle")}${esc(t("r.sure", { p: pct(p) }))}</span>`;
 const badgeFor = (x) => x.confirmedBy?.length
-  ? `<span class="confidence agreed">✔ ${esc(t("r.agreed", { s: x.confirmedBy.join(" + ") }))}</span>`
+  ? `<span class="pill ok">${icon("checkCircle")}${esc(t("r.agreed", { s: x.confirmedBy.join(" + ") }))}</span>`
   : sureBadge(x.probability);
 const agreedNote = (x) => x.confirmedBy?.length ? `<p class="hint">${esc(t("r.agreedNote"))}</p>` : "";
 
-function renderResult(res, el, { fromHistory = false } = {}) {
+// One result card: coloured icon bubble, title, optional status pill, body.
+function rcard(tone, ico, title, body, { pill = "", sub = "" } = {}) {
+  return `<article class="rcard ${tone}">
+    <header class="rcard-head">
+      <span class="bubble">${icon(ico)}</span>
+      <div class="rcard-title"><h3>${esc(cap(title))}</h3>${sub ? `<p class="sci">${esc(sub)}</p>` : ""}${pill}</div>
+    </header>
+    <div class="rcard-body">${body}</div>
+  </article>`;
+}
+const cap = (x) => { const v = String(x || ""); return v.charAt(0).toUpperCase() + v.slice(1); };
+const label = (k) => esc(t(k).replace(/\s*[:：]\s*$/, ""));
+const note = (ico, text) => `<p class="note">${icon(ico)}<span>${esc(text)}</span></p>`;
+
+function renderResult(res, el, { fromHistory = false, thumbs = [] } = {}) {
+  const head = thumbs.length
+    ? `<div class="result-head"><h2>${esc(t("r.diagnosis"))}</h2><div class="result-thumbs">${thumbs.slice(0, 6).map((s) => `<img src="${s}" alt="">`).join("")}</div></div>`
+    : "";
   if (res.verdict === "not_plant") {
-    el.innerHTML = `<div class="banner danger"><h3>🚫 ${esc(t("r.notPlant.title"))}</h3>
-      <p>${esc(t("r.notPlant.body"))}</p>${photoTipsHtml()}</div>`;
+    el.innerHTML = head + rcard("danger", "ban", t("r.notPlant.title"), `<p>${esc(t("r.notPlant.body"))}</p>${photoTipsHtml()}`);
     return;
   }
   if (res.verdict === "unclear") {
-    el.innerHTML = `<div class="banner warn"><h3>📷 ${esc(t("r.unclear.title"))}</h3>
-      <p>${esc(t("r.unclear.body"))}</p>${photoTipsHtml()}</div>`;
+    el.innerHTML = head + rcard("warn", "camera", t("r.unclear.title"), `<p>${esc(t("r.unclear.body"))}</p>${photoTipsHtml()}`);
     return;
   }
 
-  let html = "";
+  let html = head;
 
   if (res.plant.status === "sure") {
     const p = res.plant;
     const common = p.commonNames.slice(0, 3).join(", ");
-    html += `<div class="card">
-      <h3>🌿 ${esc(common || p.name)} ${badgeFor(p)}</h3>${agreedNote(p)}
-      <p class="sci">${esc(p.level === "genus" ? p.genus : p.name)}${p.family ? ` · ${esc(t("r.family", { f: p.family }))}` : ""}</p>
+    const sub = `${p.level === "genus" ? p.genus : p.name}${p.family ? ` · ${t("r.family", { f: p.family })}` : ""}`;
+    html += rcard("plant", "leaf", common || p.name, `${agreedNote(p)}
       ${p.level === "genus" ? `<p class="hint">${esc(t("r.genus", { g: p.genus }))}</p>` : ""}
       ${p.description ? `<p>${esc(p.description.slice(0, 420))}${p.description.length > 420 ? "…" : ""}</p>` : ""}
       ${careFacts(p)}
-      ${p.url ? `<p><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(t("r.readMore"))}</a></p>` : ""}
-    </div>`;
+      ${p.url ? `<p><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(t("r.readMore"))}</a></p>` : ""}`, { pill: badgeFor(p), sub });
   } else {
-    html += `<div class="banner warn"><h3>🤔 ${esc(t("r.unsurePlant.title"))}</h3>
-      <p>${esc(t("r.unsurePlant.body", { p: pct(THRESHOLDS.species) }))}</p>
-      ${candidatesHtml(res.plantCandidates, "r.candidates.title", (c) => c.common ? `${c.common} (${c.name})` : c.name)}</div>`;
+    html += rcard("warn", "help", t("r.unsurePlant.title"), `<p>${esc(t("r.unsurePlant.body", { p: pct(THRESHOLDS.species) }))}</p>
+      ${candidatesHtml(res.plantCandidates, "r.candidates.title", (c) => c.common ? `${c.common} (${c.name})` : c.name)}`);
   }
 
   if (res.health.status === "healthy") {
-    html += `<div class="banner ok"><h3>✅ ${esc(t("r.healthy.title"))} ${badgeFor(res.health)}</h3>
-      <p>${esc(t("r.healthy.body"))}</p></div>`;
+    html += rcard("ok", "checkCircle", t("r.healthy.title"), `<p>${esc(t("r.healthy.body"))}</p>`, { pill: badgeFor(res.health) });
   } else if (res.health.status === "problem") {
     for (const d of res.diseases) html += diseaseCard(d);
   } else {
     const extra = res.health.status === "unhealthy_unsure" ? t("r.healthUnsure.maybe") : t("r.healthUnsure.unknown");
-    html += `<div class="banner warn"><h3>🩺 ${esc(t("r.healthUnsure.title"))}</h3>
-      <p>${esc(extra)} ${esc(t("r.healthUnsure.noGuess"))}</p>
+    html += rcard("warn", "pulse", t("r.healthUnsure.title"), `<p>${esc(extra)} ${esc(t("r.healthUnsure.noGuess"))}</p>
       <p>${esc(t("r.healthUnsure.retake"))}</p>
       ${candidatesHtml(res.diseaseCandidates, "r.diseaseCandidates.title", (c) => c.name)}
-      ${expertBox("r.healthUnsure.expert")}</div>`;
+      ${expertBox("r.healthUnsure.expert")}`);
   }
 
   if (res.diseases.length && res.diseaseCandidates?.length) {
     html += `<div class="card">${candidatesHtml(res.diseaseCandidates, "r.diseaseCandidates.title", (c) => c.name)}</div>`;
   }
+
+  let notes = "";
   const op = res.secondOpinion;
   if (op && (res.plant.status !== "sure" || (!res.diseases.length && res.health.status !== "healthy"))) {
     const bits = [];
     if (res.plant.status !== "sure" && op.plantScientific) bits.push(`${op.plantCommon || op.plantScientific} (${pct(op.plantConfidence)})`);
     if (!res.diseases.length && op.problemCommon) bits.push(`${op.problemCommon}${op.problemScientific ? ` (${op.problemScientific})` : ""} (${pct(op.problemConfidence)})`);
-    if (bits.length) html += `<p class="hint">🤖 ${esc(t("r.aiSays", { x: bits.join("; ") }))}</p>`;
+    if (bits.length) notes += note("sparkles", t("r.aiSays", { x: bits.join("; ") }));
   }
   if (!fromHistory && !res.sources?.includes("crop.health") && (res.plant.status !== "sure" || res.plant.isCrop || /Triticum|Oryza|Gossypium|Zea|Sorghum|Pennisetum|Cicer|Cajanus|Vigna|Arachis|Brassica|Solanum|Capsicum|Saccharum/.test(res.plant.name || ""))) {
-    html += `<p class="hint">💡 ${esc(t("r.cropTip"))}</p>`;
+    notes += note("bulb", t("r.cropTip"));
   }
-  if (res.sources?.length) html += `<p class="hint">${esc(t("r.source", { s: res.sources.join(" + ") }))}</p>`;
-  if (!fromHistory && res.keyMoved) html += `<p class="hint">ℹ️ ${esc(t("err.keyMoved", { service: res.keyMoved === "cropKey" ? "crop.health" : "Plant.id" }))}</p>`;
-  if (!fromHistory) for (const w of res.warnings || []) html += `<p class="hint">⚠️ ${esc(t(w.key, w.vars))}</p>`;
+  if (!fromHistory && res.keyMoved) notes += note("help", t("err.keyMoved", { service: res.keyMoved === "cropKey" ? "crop.health" : "Plant.id" }));
+  if (!fromHistory) for (const w of res.warnings || []) notes += note("alert", t(w.key, w.vars));
+  if (res.sources?.length) notes += note("flask", t("r.source", { s: res.sources.join(" + ") }));
+  if (notes) html += `<div class="notes">${notes}</div>`;
 
   if (!fromHistory) {
-    html += `<div class="row space"><button class="btn small" id="share-btn">↗ ${esc(t("r.share"))}</button><button class="btn small" id="new-scan">＋ ${esc(t("r.newScan"))}</button></div>`;
+    html += `<div class="result-actions"><button class="btn" id="share-btn">${icon("share")}${esc(t("r.share"))}</button><button class="btn primary" id="new-scan">${icon("camera")}${esc(t("r.newScan"))}</button></div>`;
   }
   el.innerHTML = html;
 
@@ -323,7 +273,7 @@ function candidatesHtml(list, titleKey, label) {
   if (!list?.length) return "";
   return `<details class="candidates"><summary>${esc(t(titleKey))}</summary>
     <p class="hint">${esc(t("r.candidates.note"))}</p>
-    <ul class="fix-list">${list.map((c) => `<li>${esc(label(c))}: ${pct(c.probability)}</li>`).join("")}</ul></details>`;
+    <ul class="cand-list">${list.map((c) => `<li><span>${esc(label(c))}</span><span class="bar"><i style="width:${Math.round(c.probability * 100)}%"></i></span><b>${pct(c.probability)}</b></li>`).join("")}</ul></details>`;
 }
 
 function careFacts(p) {
@@ -337,37 +287,36 @@ function careFacts(p) {
   if (p.toxicity) rows.push([t("r.toxicity"), p.toxicity]);
   const filtered = rows.filter((r) => r[1]);
   if (!filtered.length) return "";
-  return `<table class="guide-table">${filtered.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(String(v).slice(0, 300))}</td></tr>`).join("")}</table>`;
+  return `<dl class="facts">${filtered.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(String(v).slice(0, 300))}</dd></div>`).join("")}</dl>`;
 }
 
 function diseaseCard(d) {
   const nutrient = d.deficiency ? matchNutrient(d.deficiency) : null;
   const kinds = (d.classification || []).join(", ");
-  let html = `<div class="banner danger"><h3>🩺 ${esc(d.name)} ${badgeFor(d)}</h3>${agreedNote(d)}`;
-  if (kinds) html += `<p class="hint">${esc(t("r.type", { t: kinds }))}</p>`;
-  if (d.description) html += `<p>${esc(d.description.slice(0, 500))}${d.description.length > 500 ? "…" : ""}</p>`;
-  if (d.scientific) html += `<p class="sci">${esc(d.scientific)}</p>`;
-  if (d.symptoms?.length) html += `<p><strong>${esc(t("r.symptoms"))}</strong> ${esc(d.symptoms.join(" "))}</p>`;
-  if (d.cause) html += `<p><strong>${esc(t("r.cause"))}</strong> ${esc(d.cause)}</p>`;
+  let body = agreedNote(d);
+  if (kinds) body += `<p class="hint">${esc(t("r.type", { t: kinds }))}</p>`;
+  if (d.description) body += `<p>${esc(d.description.slice(0, 500))}${d.description.length > 500 ? "…" : ""}</p>`;
+  if (d.symptoms?.length) body += `<h4>${label("r.symptoms")}</h4><p>${esc(d.symptoms.join(" "))}</p>`;
+  if (d.cause) body += `<h4>${label("r.cause")}</h4><p>${esc(d.cause)}</p>`;
 
   if (d.deficiency) {
     if (nutrient) {
-      html += `<p><strong>${esc(t("r.mineral"))}</strong> ${esc(t(`nut.${nutrient.id}.name`))}</p>
-        <p><strong>${esc(t("r.signs"))}</strong> ${esc(t(`nut.${nutrient.id}.signs`))}</p>
-        <p><strong>${esc(t("r.firstStep"))}</strong> ${esc(t(`nut.${nutrient.id}.step`))}</p>`;
+      body += `<h4>${label("r.mineral")}</h4><p><b>${esc(t(`nut.${nutrient.id}.name`))}</b></p>
+        <h4>${label("r.signs")}</h4><p>${esc(t(`nut.${nutrient.id}.signs`))}</p>
+        <h4>${label("r.firstStep")}</h4><ol class="steps"><li>${esc(t(`nut.${nutrient.id}.step`))}</li></ol>`;
     } else {
-      html += `<p>${esc(t("r.defUnknown"))}</p>`;
+      body += `<p>${esc(t("r.defUnknown"))}</p>`;
     }
   }
 
   if (d.primaryFix.length) {
-    html += `<p><strong>${esc(t("r.primaryFix"))}</strong></p><ul class="fix-list">${d.primaryFix.slice(0, 6).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
+    body += `<h4>${label("r.primaryFix")}</h4><ol class="steps">${d.primaryFix.slice(0, 6).map((x) => `<li>${esc(x)}</li>`).join("")}</ol>`;
   }
 
-  html += expertBox(d.deficiency ? "ex.def" : d.hasChemicalOptions ? "ex.chem" : "ex.spread");
-  if (d.url) html += `<p><a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(t("r.learnMore"))}</a></p>`;
-  html += `</div>`;
-  return html;
+  body += expertBox(d.deficiency ? "ex.def" : d.hasChemicalOptions ? "ex.chem" : "ex.spread");
+  if (d.url) body += `<p><a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(t("r.learnMore"))}</a></p>`;
+  const ico = /insect|pest|mite|aphid|worm|fly|thrips|borer/i.test(`${kinds} ${d.name}`) ? "bug" : d.deficiency ? "flask" : "pulse";
+  return rcard("danger", ico, d.name, body, { pill: badgeFor(d), sub: d.scientific });
 }
 
 async function shareResult(res) {
@@ -487,26 +436,26 @@ function renderPlaces() {
     const today = f ? W.todayIn(f.timezone) : "";
 
     const strip = f ? `<div class="forecast">${f.days.filter((d) => W.daysBetween(today, d.date) >= 0).slice(0, 10).map((d) => {
-      const [icon] = W.WX[d.code] || ["🌡️"];
+      const [wx] = W.WX[d.code] || ["🌡️"];
       return `<div class="day ${hazardDates.has(d.date) ? "hazard" : ""}">
-        <div>${esc(fmtDate(d.date, { weekday: "short" }))}</div><div class="wx">${icon}</div>
+        <div>${esc(fmtDate(d.date, { weekday: "short" }))}</div><div class="wx">${wx}</div>
         <div>${Math.round(d.tmax)}° / ${Math.round(d.tmin)}°</div><div>${d.rain >= 0.5 ? `${Math.round(d.rain)} mm` : "&nbsp;"}</div></div>`;
     }).join("")}</div>` : `<p class="hint">${esc(t("places.noForecast"))}</p>`;
 
     const alertHtml = (e) => `<div class="alert ${e.severe ? "severe" : ""}">
-      <strong>${e.severe ? "🔴" : "🟠"} ${esc(e.title)}: ${esc(W.whenText(e.daysAhead, t))}</strong>
+      <strong>${icon("alert")} ${esc(e.title)}: ${esc(W.whenText(e.daysAhead, t))}</strong>
       <span class="when">${esc(e.detail)} · ${esc(fmtDate(e.date, { weekday: "long", day: "numeric", month: "short" }))}${e.lowConfidence ? ` · ${esc(t("places.early"))}` : ""}</span>
       <ul>${e.advice.map((a) => `<li>${esc(a)}</li>`).join("")}</ul></div>`;
 
     return `<div class="card place-card" data-id="${p.id}">
       <header>
         <div><h3>${esc(p.name)}</h3><div class="place-sub">${esc(p.region || "")}</div></div>
-        <button class="icon-btn" data-del="${p.id}" aria-label="${esc(t("places.remove"))}">🗑️</button>
+        <button class="icon-btn" data-del="${p.id}" aria-label="${esc(t("places.remove"))}">${icon("trash")}</button>
       </header>
       ${strip}
-      ${soon.length ? soon.map(alertHtml).join("") : f ? `<p class="hint">✅ ${esc(t("places.noDanger"))}</p>` : ""}
+      ${soon.length ? soon.map(alertHtml).join("") : f ? `<p class="note">${icon("checkCircle")}<span>${esc(t("places.noDanger"))}</span></p>` : ""}
       ${later.length ? `<details><summary class="hint">${esc(t("places.later", { n: later.length }))}</summary>${later.map(alertHtml).join("")}</details>` : ""}
-      <div class="plant-tags">${(p.plants || []).map((pl, i) => `<span class="tag">🌱 ${esc(pl)}<button data-rmplant="${i}" aria-label="✕">✕</button></span>`).join("")}</div>
+      <div class="plant-tags">${(p.plants || []).map((pl, i) => `<span class="tag">${icon("sprout")}${esc(pl)}<button data-rmplant="${i}" aria-label="${esc(t("scan.remove"))}">${icon("x")}</button></span>`).join("")}</div>
       <div class="row"><input type="text" placeholder="${esc(t("places.addPlantPh"))}" data-plant-input><button class="btn small" data-addplant>${esc(t("places.addPlant"))}</button></div>
       <details><summary class="hint">${esc(t("places.details"))}</summary>
         <label class="field-label">${esc(t("places.name"))}</label><input type="text" data-rename value="${esc(p.name)}">
@@ -518,7 +467,7 @@ function renderPlaces() {
   }).join("");
 
   $("#alert-summary").innerHTML = total
-    ? `<div class="banner warn"><strong>⚠️ ${esc(t("places.summary", { n: total }))}</strong></div>`
+    ? `<div class="banner warn"><strong>${icon("alert")} ${esc(t("places.summary", { n: total }))}</strong></div>`
     : "";
 
   $$(".place-card", list).forEach((card) => {
@@ -593,7 +542,7 @@ $("#enable-notify").addEventListener("click", async () => {
 
 function updateNotifyButton() {
   const on = "Notification" in window && Notification.permission === "granted";
-  $("#enable-notify").textContent = `🔔 ${on ? t("places.alertsOn") : t("places.alertsOff")}`;
+  $("#enable-notify").innerHTML = `${icon("bell")}${esc(on ? t("places.alertsOn") : t("places.alertsOff"))}`;
   $("#enable-notify").disabled = on;
 }
 
@@ -633,7 +582,7 @@ function renderHistory() {
         <img src="${h.thumb}" alt="">
         <div>
           <strong>${esc(name)}</strong><br>${esc(health)}
-          <div class="when">${esc(fmtDateTime(h.at))}${h.placeName ? ` · ${esc(h.placeName)}` : ""} · ${esc(h.parts.map(partLabel).join(", "))}</div>
+          <div class="when">${esc(fmtDateTime(h.at))}${h.placeName ? ` · ${esc(h.placeName)}` : ""}</div>
         </div>
       </div>
       <details><summary class="hint">${esc(t("history.full"))}</summary><div data-full="${h.id}"></div></details>
@@ -654,25 +603,25 @@ function renderHistory() {
 function renderGuide() {
   $("#guide-content").innerHTML = `
     <div class="card">
-      <h3>📞 ${esc(t("guide.expert"))}</h3>
+      <h3>${icon("phone")} ${esc(t("guide.expert"))}</h3>
       <p>${esc(t("guide.expertBody"))}</p>
       <p><a class="btn primary" href="tel:${HELP.kccPhone}">${esc(t("guide.call", { n: HELP.kccDisplay }))}</a></p>
       <p class="hint">${esc(t("help.kcc"))}</p>
       <ul>${HELP.links.map((l) => `<li><a href="${l.url}" target="_blank" rel="noopener">${esc(t(l.key))}</a></li>`).join("")}</ul>
     </div>
     <div class="card">
-      <h3>📸 ${esc(t("guide.photo"))}</h3>
+      <h3>${icon("camera")} ${esc(t("guide.photo"))}</h3>
       ${photoTipsHtml()}
     </div>
     <div class="card">
-      <h3>🧪 ${esc(t("guide.def"))}</h3>
+      <h3>${icon("flask")} ${esc(t("guide.def"))}</h3>
       <p class="hint">${esc(t("guide.defNote"))}</p>
       <table class="guide-table"><tr><th>${esc(t("guide.mineral"))}</th><th>${esc(t("guide.signs"))}</th></tr>
       ${NUTRIENTS.map((n) => `<tr><td><strong>${esc(t(`nut.${n.id}.name`))}</strong></td><td>${esc(t(`nut.${n.id}.signs`))}</td></tr>`).join("")}</table>
       <p class="hint">${esc(t("guide.defTip"))}</p>
     </div>
     <div class="card">
-      <h3>🌦️ ${esc(t("guide.weather"))}</h3>
+      <h3>${icon("cloud")} ${esc(t("guide.weather"))}</h3>
       <p>${esc(t("guide.weatherIntro"))}</p>
       <ul class="fix-list">${["guide.w1", "guide.w2", "guide.w3", "guide.w4", "guide.w5", "guide.w6"].map((k) => `<li>${esc(t(k))}</li>`).join("")}</ul>
       <p class="hint">${esc(t("guide.weatherNote"))}</p>
@@ -687,7 +636,8 @@ function renderGuide() {
 function renderSettings() {
   const s = store.getSettings();
   const mode = serviceMode();
-  $("#service-status").textContent = mode === "proxy" ? `✅ ${t("settings.proxy")}` : mode === "key" ? `✅ ${t("settings.keyMode")}` : `⚠️ ${t("settings.none")}`;
+  $("#service-status").innerHTML = `${icon(mode === "none" ? "alert" : "checkCircle")}<span>${esc(mode === "proxy" ? t("settings.proxy") : mode === "key" ? t("settings.keyMode") : t("settings.none"))}</span>`;
+  $("#service-status").className = `note ${mode === "none" ? "warn" : "ok"}`;
   $("#api-key").value = s.apiKey ? "••••••••" : "";
   $("#crop-key").value = s.cropKey ? "••••••••" : "";
   $("#gemini-key").value = s.geminiKey ? "••••••••" : "";
@@ -738,7 +688,7 @@ function renderAll() {
   renderGuide();
   fillPlaceSelect();
   updateNotifyButton();
-  if (lastResult) renderResult(lastResult, $("#result"));
+  if (lastResult) renderResult(lastResult, $("#result"), { thumbs: lastThumbs });
   if (currentView === "places") renderPlaces();
   if (currentView === "history") renderHistory();
   if (currentView === "settings") renderSettings();
@@ -765,7 +715,16 @@ function showLangPicker() {
   }));
 }
 
+/* ---------------- Theme ---------------- */
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem("paudha.theme", theme); } catch { /* private mode */ }
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#0b1a10" : "#eef5ea");
+}
+$("#theme-btn").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+
 /* ---------------- Start ---------------- */
+hydrateIcons();
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
   navigator.serviceWorker.addEventListener("message", (e) => {

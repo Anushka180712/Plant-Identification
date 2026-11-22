@@ -4,7 +4,6 @@
 
   "scan.title": "Check a plant",
   "scan.intro": "Add clear photos of the parts you are worried about. More parts (leaf + whole plant) give a more reliable answer.",
-  "scan.partQ": "Which part is in the photo?",
   "part.leaf": "Leaf", "part.stem": "Stem", "part.root": "Root", "part.whole": "Whole plant", "part.flower": "Flower / fruit",
   "scan.takePhoto": "Take photo",
   "scan.gallery": "From gallery",
@@ -293,10 +292,15 @@
   "err.geminiKey": "Gemini rejected the API key. Check the Gemini key in Settings.",
   "settings.geminiLabel": "Gemini API key (free AI second opinion: a plant or disease is named when Gemini and Plant.id or crop.health agree. Photos are also sent to Google.)",
   "settings.geminiHint": "Create a free key in Google AI Studio:",
-  "scan.burst": "Quick camera (several photos in a row)",
-  "scan.burstHint": "Snap leaf, stem and whole plant one after another. Tap the part at the top before each shot. You can also pick several photos from the gallery at once and change each photo's part below.",
-  "scan.done": "Done ({n})",
-  "scan.cameraFail": "Couldn't open the camera here. Using the normal camera instead.",
+
+  "scan.addTitle": "Add photos of your plant",
+  "scan.addHint": "Add as many as you like: the sick leaf (top and underside), stem, roots and the whole plant. The app works out what each photo shows.",
+  "scan.addMore": "Add more",
+  "scan.photoN": "Photo {n}",
+  "r.diagnosis": "Diagnosis",
+  "how.1": "Take photos",
+  "how.2": "Get a sure diagnosis",
+  "how.3": "Follow safe first steps",
 
   "lang.pick": "Choose your language"
 };
